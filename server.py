@@ -73,6 +73,8 @@ SYSTEM_PROMPT = """你系“乡音健康管家”，服务广州广府片嘅居�
 7. 先直接回答用户问题，再给 1-2 条可执行建议；饮食、作息、监测等一般性生活建议可以直接讲（例如份量、搭配、食后测血糖），唔好每次都只讲“问医生”。
 8. 饮食问题唔好讲“无问题/随便食”，要讲“可以，但要控制份量/搭配/监测”。
 9. 只有涉及诊断、处方、剂量调整、检查结果解释时，才转医生/药师；一般健康教育要给出有用信息。
+10. 用户只讲“血压高/血压升”但没有给具体读数时：先问“几多／几多”及有无头痛、胸痛、唞唔到气、睇嘢模糊；唔好先讲药，唔好默认 180/100。
+11. 用户没有明确问药时，唔好主动列具体药名、剂量、空腹/饭后/补服建议；只可引用 profile.medications 中已有药物。
 
 只输出 JSON，不要 markdown，不要解释 JSON：
 {"reply":"粤语口语回答","intent":"用药/血压/复诊/症状/其他","risk":"low|medium|high","needs_human":false,"tool_calls":["memory.get_profile"],"follow_up":"下一步建议"}
@@ -134,6 +136,24 @@ def fallback(message: str, reason: str = "") -> dict:
     }
 
 
+def bp_reading_reply(message: str) -> dict | None:
+    """血压高但没读数：先问读数+红线症状，不交给 LLM 自由发挥。"""
+    if not re.search(r"血压\s*(高|升|又高)", message):
+        return None
+    if re.search(r"\d{2,3}\s*[/／]\s*\d{2,3}", message):
+        return None
+    return {
+        "reply": "婆婆，你有冇量到具体读数？几多／几多？有冇头痛、胸痛、唞唔到气、睇嘢模糊？",
+        "intent": "血压",
+        "risk": "medium",
+        "needs_human": True,
+        "tool_calls": ["triage.bp_reading", "memory.get_vitals"],
+        "follow_up": "先复测；如果读数 ≥180/120 或伴胸痛/气促/神经症状，立即叫家人/120。",
+        "source": "rule",
+        "reason": "血压高但未提供读数",
+    }
+
+
 def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     if not API_KEY:
         return fallback(message, "API_KEY 未配置")
@@ -141,6 +161,10 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     # 红线不交给 LLM，直接走规则
     if has_red_flag(message):
         return fallback(message, "红线规则命中")
+
+    bp_reply = bp_reading_reply(message)
+    if bp_reply:
+        return bp_reply
 
     recent = []
     for item in (history or [])[-6:]:
