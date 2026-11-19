@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from difflib import SequenceMatcher
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -213,7 +214,7 @@ def dedupe_reply(reply: str, message: str, history: list[dict] | None) -> str:
     if not last:
         return reply
     norm = lambda x: re.sub(r"[\s，。！？、；：,.!?;:]+", "", x or "")
-    if norm(reply) != norm(last):
+    if SequenceMatcher(None, norm(reply), norm(last)).ratio() < 0.78:
         return reply
     if re.search(r"(食粥|食饭|饮食|食乜|食咩)", message):
         return "婆婆，你头先问过食粥。可以食，但份量半碗左右，配菜或者蛋白质，食后两小时测血糖；如果血糖高过平时，就同我讲。"
