@@ -264,7 +264,7 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
             "text": str(item.get("text", ""))[:500],
             "citation": item.get("citation", ""),
         })
-    citations = [k["citation"] for k in knowledge]
+    citations = list(dict.fromkeys([k["citation"] for k in knowledge]))
 
     recent = []
     for item in (history or [])[-6:]:
@@ -339,6 +339,7 @@ def stream_llm(message: str, profile: dict, history: list[dict]):
         "needs_human": data.get("needs_human", False),
         "intent": data.get("intent", "其他"),
         "latency_ms": round((time.time() - started) * 1000),
+        "citations": data.get("citations", []),
     }
 
 
