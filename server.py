@@ -74,7 +74,10 @@ SYSTEM_PROMPT = """你系“乡音健康管家”，服务广州广府片嘅居�
 8. 饮食问题唔好讲“无问题/随便食”，要讲“可以，但要控制份量/搭配/监测”。
 9. 只有涉及诊断、处方、剂量调整、检查结果解释时，才转医生/药师；一般健康教育要给出有用信息。
 10. 用户只讲“血压高/血压升”但没有给具体读数时：先问“几多／几多”及有无头痛、胸痛、唞唔到气、睇嘢模糊；唔好先讲药，唔好默认 180/100。
-11. 用户没有明确问药时，唔好主动列具体药名、剂量、空腹/饭后/补服建议；只可引用 profile.medications 中已有药物。
+11. 用户没有明确问药时，唔好主动列具体药名、剂量、空腹/饭后/补服建议。
+12. 用生活化比喻：血压=水管压力，血糖=血液里的糖，血管=水管，心脏=泵；唔好一开口就讲药名。
+13. 用户重复问同一件事时，先讲“你头先问过…”，再补充一个新信息或换一种讲法；唔好原句重复。
+14. 如果用户问“食咩药/药名/剂量”，只讲“医生会按情况拣/按药袋食”，唔好列药名、唔好推荐换药。
 
 只输出 JSON，不要 markdown，不要解释 JSON：
 {"reply":"粤语口语回答","intent":"用药/血压/复诊/症状/其他","risk":"low|medium|high","needs_human":false,"tool_calls":["memory.get_profile"],"follow_up":"下一步建议"}
@@ -136,22 +139,87 @@ def fallback(message: str, reason: str = "") -> dict:
     }
 
 
-def bp_reading_reply(message: str) -> dict | None:
-    """血压高但没读数：先问读数+红线症状，不交给 LLM 自由发挥。"""
+BP_VARIANTS = [
+    "婆婆，血压高即系血管压力大。你有冇量到几多／几多？有冇头痛、胸痛、唞唔到气、睇嘢模糊？唔好自己加药，坐低休息十分钟再量。",
+    "婆婆，先坐低慢慢讲。你今日量到几多／几多？有冇头痛、心口痛、气促？血压高唔好自己加药，等阵复测。",
+    "婆婆，血压高要睇读数同症状。你而家量到几多／几多？有冇唔舒服？先休息十分钟，再量一次。",
+]
+
+
+def med_plain_reply(message: str) -> dict | None:
+    if not re.search(r"(药|服药|食药|漏服|加药|减药|药名|药袋|药盒)", message):
+        return None
+    if re.search(r"(食咩药|食什么药|边只药|药名|推荐.*药|换药|加药|减药|剂量|食几多|打几多)", message):
+        return {
+            "reply": "婆婆，降压药、降糖药有好多类，医生会按你血压、血糖、肾同心脏情况拣，我唔会帮你换药或介绍药名。你药袋上嗰只继续按吩咐食，唔好自己加减；唔舒服就问医生/药师。",
+            "intent": "用药", "risk": "medium", "needs_human": True,
+            "tool_calls": ["policy.medication_boundary", "escalate.pharmacist"],
+            "follow_up": "只按标签/医嘱；不自行加量、减量、补双倍。",
+            "source": "rule_plain", "reason": "用药问题不列药名/不调剂量",
+        }
+    if re.search(r"(漏服|唔记得|漏食|忘记)", message):
+        return {
+            "reply": "婆婆，漏咗一次唔好补双倍，下次按原本时间食。你药袋上嗰只药如果唔确定，就影张相问家人/药师，唔好自己加。",
+            "intent": "用药", "risk": "medium", "needs_human": True,
+            "tool_calls": ["policy.missed_dose", "escalate.pharmacist"],
+            "follow_up": "不补双倍；问药师/医生。",
+            "source": "rule_plain", "reason": "漏服边界",
+        }
+    return {
+        "reply": "婆婆，药要按药袋/医生吩咐食，我唔会帮你调剂量。你食完有冇头晕、心慌、肚唔舒服？有就同我讲，我帮你问医生/药师。",
+        "intent": "用药", "risk": "medium", "needs_human": True,
+        "tool_calls": ["policy.medication_boundary"],
+        "follow_up": "观察不适；问医生/药师。",
+        "source": "rule_plain", "reason": "用药问题简答",
+    }
+
+
+def bp_reading_reply(message: str, history: list[dict] | None = None) -> dict | None:
     if not re.search(r"血压\s*(高|升|又高)", message):
         return None
-    if re.search(r"\d{2,3}\s*[/／]\s*\d{2,3}", message):
+    if re.search(r"(食咩药|药名|边只药|换药|加药|减药|剂量)", message):
         return None
+    match = re.search(r"(\d{2,3})\s*[/／]\s*(\d{2,3})", message)
+    if not match:
+        idx = (len(history or []) // 2) % len(BP_VARIANTS)
+        return {
+            "reply": BP_VARIANTS[idx], "intent": "血压", "risk": "medium", "needs_human": True,
+            "tool_calls": ["triage.bp_reading", "memory.get_vitals"],
+            "follow_up": "先复测；如果读数 >=180/120 或伴胸痛/气促/神经症状，立即叫家人/120。",
+            "source": "rule_plain", "reason": "血压高但未提供读数",
+        }
+    systolic, diastolic = int(match.group(1)), int(match.group(2))
+    urgent = systolic >= 180 or diastolic >= 120
+    reply = "婆婆，" + str(systolic) + "/" + str(diastolic) + " 偏高。你先坐低休息十分钟再量；如果高过180/120，或者有胸痛、气促、头痛、睇嘢模糊，立即叫家人/120。唔好自己加药。"
+    if urgent:
+        reply = "婆婆，" + str(systolic) + "/" + str(diastolic) + " 好高，唔好等。你而家坐低，唔好行，我帮你叫家人/120；如果有胸痛、气促、讲唔清，立即讲。"
     return {
-        "reply": "婆婆，你有冇量到具体读数？几多／几多？有冇头痛、胸痛、唞唔到气、睇嘢模糊？",
-        "intent": "血压",
-        "risk": "medium",
-        "needs_human": True,
-        "tool_calls": ["triage.bp_reading", "memory.get_vitals"],
-        "follow_up": "先复测；如果读数 ≥180/120 或伴胸痛/气促/神经症状，立即叫家人/120。",
-        "source": "rule",
-        "reason": "血压高但未提供读数",
+        "reply": reply, "intent": "血压", "risk": "high" if urgent else "medium", "needs_human": True,
+        "tool_calls": ["triage.bp_reading", "escalate.120" if urgent else "notify.family"],
+        "follow_up": "复测并记录；>=180/120 或伴症状立即就医。",
+        "source": "rule_plain", "reason": "血压读数处理",
     }
+
+
+def last_assistant_text(history: list[dict] | None) -> str:
+    for item in reversed(history or []):
+        if item.get("role") == "assistant":
+            return str(item.get("content", "")).strip()
+    return ""
+
+
+def dedupe_reply(reply: str, message: str, history: list[dict] | None) -> str:
+    last = last_assistant_text(history)
+    if not last:
+        return reply
+    norm = lambda x: re.sub(r"[\s，。！？、；：,.!?;:]+", "", x or "")
+    if norm(reply) != norm(last):
+        return reply
+    if re.search(r"(食粥|食饭|饮食|食乜|食咩)", message):
+        return "婆婆，你头先问过食粥。可以食，但份量半碗左右，配菜或者蛋白质，食后两小时测血糖；如果血糖高过平时，就同我讲。"
+    if re.search(r"(药|服药|食药)", message):
+        return "婆婆，你头先问过药。你药袋上嗰只继续按吩咐食，唔好自己加减；最近有冇漏食、头晕或者肚唔舒服？"
+    return "婆婆，你头先问过呢个问题，我换个讲法：" + reply
 
 
 def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
@@ -162,9 +230,15 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     if has_red_flag(message):
         return fallback(message, "红线规则命中")
 
-    bp_reply = bp_reading_reply(message)
+    bp_reply = bp_reading_reply(message, history)
     if bp_reply:
+        bp_reply["reply"] = dedupe_reply(bp_reply["reply"], message, history)
         return bp_reply
+
+    med_reply = med_plain_reply(message)
+    if med_reply:
+        med_reply["reply"] = dedupe_reply(med_reply["reply"], message, history)
+        return med_reply
 
     recent = []
     for item in (history or [])[-6:]:
@@ -184,7 +258,7 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_payload},
         ],
-        "temperature": 0.25,
+        "temperature": 0.4,
         "max_tokens": 320,
     }, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -222,6 +296,7 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     }
     if "唔系诊断" not in result["reply"] and "不是诊断" not in result["reply"]:
         result["reply"] = result["reply"].rstrip("。") + "。呢个只系健康教育，唔系诊断。"
+    result["reply"] = dedupe_reply(result["reply"], message, history)
     return result
 
 
