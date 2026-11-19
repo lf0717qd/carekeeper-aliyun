@@ -160,10 +160,10 @@ def safety_reply(text: str):
     return None
 
 FRAUD_PATTERNS = [
-    ("中奖", r"(中奖|抽中|领奖|奖金)"),
+    ("中奖", r"(中奖|抽中.*奖|领奖|奖金)"),
     ("安全账户", r"(安全账户|安全账号|资金审查|清查账户)"),
-    ("公检法", r"(公检法|公安.*办案|检察院|法院.*传票|通缉)"),
-    ("转账", r"(转账|汇款|打款|银行卡.*钱|验证码)"),
+    ("公检法", r"(公检法|公安.*(办案|洗钱|通缉)|检察院.*(调查|传票)|法院.*传票|通缉)"),
+    ("诱导转账", r"((转账|汇款|打款).*(安全|陌生|客服|公安|检察院|法院|中奖|投资|保证金|手续费|刷单)|(安全|陌生|客服|公安|检察院|法院|中奖|投资|保证金|手续费|刷单).*(转账|汇款|打款)|验证码.*(客服|退款|银行|公安|陌生|转账))"),
     ("刷单", r"(刷单|返利|做任务.*钱|兼职.*佣金)"),
     ("养老投资", r"(养老投资|高回报|保本高息|以房养老|投资项目.*老人)"),
     ("神药", r"(包治|神药|根治|保健品.*治|专家.*推荐.*药)"),
@@ -181,6 +181,64 @@ def fraud_reply(text: str):
                 "tool_calls": ["safety.scam", "escalate.110"],
                 "follow_up": "不要转账/给验证码；联系家人或110。",
                 "source": "rule_fraud",
+            }
+    return None
+
+def money_safety_reply(text: str):
+    if not re.search(r"(转账|汇款|打款|银行卡|验证码|押金)", text):
+        return None
+    if "验证码" in text:
+        reply = "验证码唔好俾任何人，包括自称客服、公安或者银行嘅人。有疑问挂线，打110或者叫家人帮手。"
+        follow = "不要给验证码；挂线；打110/叫家人。"
+    elif re.search(r"(医院|住院|押金|缴费)", text):
+        reply = "医院缴费行正式窗口或者对公账户，唔好转个人账户。有疑问打医院总机，或者叫家人陪你核实。"
+        follow = "医院缴费走窗口/对公账户；不转个人账户。"
+    elif re.search(r"(医保|报销)", text):
+        reply = "医保报销用银行卡通常正常，但只交给医保局、社区或者医院正式渠道，唔好俾陌生人，也唔好俾验证码。"
+        follow = "只走医保/社区/医院正式渠道；不给陌生人/验证码。"
+    else:
+        reply = "钱银转账我唔帮你操作。同家人或者银行确认，唔好向陌生账户转；怀疑骗案打110。"
+        follow = "不向陌生账户转账；同家人/银行确认。"
+    return {
+        "reply": reply,
+        "intent": "钱银安全",
+        "risk": "medium",
+        "needs_human": True,
+        "tool_calls": ["safety.money"],
+        "follow_up": follow,
+        "source": "rule_money_safety",
+    }
+
+MYTH_PATTERNS = [
+    ("喝醋软化血管", r"(醋.*软化血管|软化血管.*醋)"),
+    ("输液通血管", r"(输液.*通血管|通血管.*输液)"),
+    ("保健品根治", r"(保健品.*根治|偏方.*根治|吃.*保健品.*停药)"),
+    ("饿死癌细胞", r"(饿死.*癌|唔食饭.*癌|不吃饭.*癌)"),
+]
+
+def myth_reply(text: str):
+    for kind, pat in MYTH_PATTERNS:
+        if re.search(pat, text):
+            if kind == "喝醋软化血管":
+                reply = "婆婆，醋唔会软化血管，呢个系偏方。血压高要按医生药、少盐、复诊；胃唔好更唔好空腹饮醋。"
+                follow = "不要靠喝醋软化血管；按医嘱服药/复诊。"
+            elif kind == "输液通血管":
+                reply = "输液唔可以通血管，反而有风险。血管问题要医生评估，唔好去没资质的地方吊针。"
+                follow = "不要靠输液通血管；看医生。"
+            elif kind == "饿死癌细胞":
+                reply = "唔可以靠饿死癌细胞。唔食饭会营养不良、抵抗力更差；要按医生/营养师嘅方案食，唔好自己戒口。"
+                follow = "不要靠不吃饭饿死癌细胞；按医生/营养师。"
+            else:
+                reply = "保健品/偏方唔可以根治慢性病，也唔可以代替医生药。唔好自己停药；有疑问问医生/药师。"
+                follow = "保健品不替代药物；不自行停药。"
+            return {
+                "reply": reply,
+                "intent": "健康辟谣",
+                "risk": "medium",
+                "needs_human": False,
+                "tool_calls": ["safety.myth"],
+                "follow_up": follow,
+                "source": "rule_myth",
             }
     return None
 
@@ -314,6 +372,13 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     if not API_KEY:
         return fallback(message, "API_KEY 未配置")
 
+    # 辟谣优先于“不能开药”的拒答；但有红线或明显骗案词时让位
+    if not has_red_flag(message):
+        myth = myth_reply(message)
+        scam_words = r"(中奖|转账|安全账户|公检法|验证码|客服.*退款|刷单|投资|免费|讲座|推销)"
+        if myth and not re.search(scam_words, message):
+            return myth
+
     # 红线不交给 LLM，直接走规则
     safety = safety_reply(message)
     if safety:
@@ -324,6 +389,12 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     fraud = fraud_reply(message)
     if fraud:
         return fraud
+    money = money_safety_reply(message)
+    if money:
+        return money
+    myth = myth_reply(message)
+    if myth:
+        return myth
 
     bp_reply = bp_reading_reply(message, history)
     if bp_reply:
