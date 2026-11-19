@@ -21,6 +21,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+try:
+    from kb_runtime import search as kb_search
+except Exception:
+    kb_search = None
+
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("FC_SERVER_PORT", os.getenv("PORT", "9000")))
@@ -79,6 +84,7 @@ SYSTEM_PROMPT = """你系“乡音健康管家”，服务广州广府片嘅居�
 12. 用生活化比喻：血压=水管压力，血糖=血液里的糖，血管=水管，心脏=泵；唔好一开口就讲药名。
 13. 用户重复问同一件事时，先讲“你头先问过…”，再补充一个新信息或换一种讲法；唔好原句重复。
 14. 如果用户问“食咩药/药名/剂量”，只讲“医生会按情况拣/按药袋食”，唔好列药名、唔好推荐换药。
+15. 如果 user_payload 里有 knowledge：只根据 knowledge 回答，引用标题/章节；knowledge 没有的，就讲“我唔确定，帮你问家医/姑娘”，唔好编。
 
 只输出 JSON，不要 markdown，不要解释 JSON：
 {"reply":"粤语口语回答","intent":"用药/血压/复诊/症状/其他","risk":"low|medium|high","needs_human":false,"tool_calls":["memory.get_profile"],"follow_up":"下一步建议"}
@@ -241,6 +247,25 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
         med_reply["reply"] = dedupe_reply(med_reply["reply"], message, history)
         return med_reply
 
+    kb_items = []
+    if kb_search:
+        try:
+            kb_items = kb_search(message, top_k=3, use_rule=False)
+        except Exception:
+            kb_items = []
+    knowledge = []
+    for item in kb_items:
+        if item.get("risk_level") == "high" or item.get("answer_policy") == "refuse":
+            continue
+        knowledge.append({
+            "title": item.get("title", ""),
+            "section": item.get("section_path", ""),
+            "page": item.get("page_start"),
+            "text": str(item.get("text", ""))[:500],
+            "citation": item.get("citation", ""),
+        })
+    citations = [k["citation"] for k in knowledge]
+
     recent = []
     for item in (history or [])[-6:]:
         role = item.get("role")
@@ -249,7 +274,7 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
             recent.append({"role": role, "content": content})
 
     user_payload = json.dumps(
-        {"message": message, "profile": profile, "recent": recent},
+        {"message": message, "profile": profile, "recent": recent, "knowledge": knowledge},
         ensure_ascii=False,
     )
     started = time.time()
@@ -294,6 +319,7 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
         "source": "llm",
         "model": MODEL,
         "latency_ms": elapsed,
+        "citations": citations,
     }
     if "唔系诊断" not in result["reply"] and "不是诊断" not in result["reply"]:
         result["reply"] = result["reply"].rstrip("。") + "。呢个只系健康教育，唔系诊断。"
@@ -403,7 +429,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search"):
             self._json(404, {"error": "not found"})
             return
         try:
@@ -412,6 +438,19 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/asr":
                 result = transcribe(str(payload.get("audio_base64", "")))
                 self._json(200, result)
+                return
+            if path == "/api/kb/search":
+                query = str(payload.get("query", "")).strip()
+                if not query:
+                    self._json(400, {"error": "query required"})
+                    return
+                try:
+                    top_k = int(payload.get("top_k", 5))
+                except Exception:
+                    top_k = 5
+                top_k = max(1, min(10, top_k))
+                results = kb_search(query, top_k=top_k, use_rule=True) if kb_search else []
+                self._json(200, {"query": query, "count": len(results), "results": results})
                 return
             message = str(payload.get("message", "")).strip()
             if not message:
