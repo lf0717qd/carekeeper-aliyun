@@ -159,6 +159,31 @@ def safety_reply(text: str):
             }
     return None
 
+FRAUD_PATTERNS = [
+    ("中奖", r"(中奖|抽中|领奖|奖金)"),
+    ("安全账户", r"(安全账户|安全账号|资金审查|清查账户)"),
+    ("公检法", r"(公检法|公安.*办案|检察院|法院.*传票|通缉)"),
+    ("转账", r"(转账|汇款|打款|银行卡.*钱|验证码)"),
+    ("刷单", r"(刷单|返利|做任务.*钱|兼职.*佣金)"),
+    ("养老投资", r"(养老投资|高回报|保本高息|以房养老|投资项目.*老人)"),
+    ("神药", r"(包治|神药|根治|保健品.*治|专家.*推荐.*药)"),
+    ("冒充客服", r"(客服.*退款|快递.*赔|社保.*停|医保.*停)"),
+]
+
+def fraud_reply(text: str):
+    for kind, pat in FRAUD_PATTERNS:
+        if re.search(pat, text):
+            return {
+                "reply": "婆婆，呢啲多数系骗案。唔好转账、唔好俾验证码、唔好买；即刻挂线，打110或者叫家人帮手。",
+                "intent": "防诈骗",
+                "risk": "high",
+                "needs_human": True,
+                "tool_calls": ["safety.scam", "escalate.110"],
+                "follow_up": "不要转账/给验证码；联系家人或110。",
+                "source": "rule_fraud",
+            }
+    return None
+
 def has_red_flag(text: str) -> bool:
     return any(word in text for word in RED_FLAGS)
 
@@ -295,6 +320,10 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
         return safety
     if has_red_flag(message):
         return fallback(message, "红线规则命中")
+
+    fraud = fraud_reply(message)
+    if fraud:
+        return fraud
 
     bp_reply = bp_reading_reply(message, history)
     if bp_reply:
