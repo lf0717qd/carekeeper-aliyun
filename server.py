@@ -17,6 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import secrets
 import uuid
 from difflib import SequenceMatcher
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -76,6 +77,43 @@ CHANNELS = {
     "wechat": {"label": "微信（本期不做）", "mode": "adapter_demo", "transport": "企业微信不采用"},
     "community": {"label": "社区/家医", "mode": "adapter_demo", "transport": "工单/电话（未接）"},
 }
+
+DEMO_USERS = {
+    "13800000001": {"password": "123456", "role": "elder", "name": "陈婆婆", "patient_ids": ["chen"]},
+    "13800000002": {"password": "123456", "role": "family", "name": "陈先生", "patient_ids": ["chen"]},
+    "13800000003": {"password": "123456", "role": "doctor", "name": "李医生", "patient_ids": ["chen", "li"]},
+}
+
+PATIENTS = {
+    "chen": {"id": "chen", "name": "陈婆婆", "age": 76, "area": "广州荔湾",
+             "dx": "高血压、2型糖尿病", "bp": "148/86", "med": "2/3",
+             "follow": "11-25 09:00 · 社区医院二楼",
+             "alerts": [{"t": "今日 08:42", "text": "血压 148/86，已建议静坐复测", "level": "medium", "handled": False},
+                        {"t": "昨日 16:10", "text": "漏服一次降压药，已转药师确认", "level": "medium", "handled": True}]},
+    "li": {"id": "li", "name": "李伯", "age": 81, "area": "广州越秀",
+           "dx": "高血压、慢阻肺", "bp": "132/78", "med": "3/3",
+           "follow": "11-28 10:00 · 社区医院",
+           "alerts": [{"t": "今日 09:10", "text": "血氧 93%，已建议复测并联系家医", "level": "high", "handled": False}]},
+}
+
+SESSIONS = {}
+
+
+def auth_user_from_header(header: str):
+    if not header or not header.startswith("Bearer "):
+        return None
+    token = header[7:].strip()
+    item = SESSIONS.get(token)
+    if not item:
+        return None
+    if item["expires"] < time.time():
+        SESSIONS.pop(token, None)
+        return None
+    return item
+
+
+def user_patients(user):
+    return [PATIENTS[x] for x in user.get("patient_ids", []) if x in PATIENTS]
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
 ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
 
@@ -612,7 +650,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
         self.send_header("Access-Control-Max-Age", "86400")
         super().end_headers()
 
@@ -630,6 +668,20 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/auth/me":
+            user = auth_user_from_header(self.headers.get("Authorization", ""))
+            if not user:
+                self._json(401, {"error": "unauthorized"})
+                return
+            self._json(200, {"role": user["role"], "name": user["name"], "account": user["account"], "patient_ids": user["patient_ids"]})
+            return
+        if path == "/api/app/patients":
+            user = auth_user_from_header(self.headers.get("Authorization", ""))
+            if not user:
+                self._json(401, {"error": "unauthorized"})
+                return
+            self._json(200, {"patients": user_patients(user)})
+            return
         if path == "/api/channels":
             self._json(200, {"channels": [{"id": k, **v} for k, v in CHANNELS.items()]})
             return
@@ -662,13 +714,56 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path == "/api/auth/login":
+                account = str(payload.get("account", "")).strip()
+                password = str(payload.get("password", ""))
+                item = DEMO_USERS.get(account)
+                if not item or item["password"] != password:
+                    audit_event("auth.login_failed", request_id=request_id, account_hash=hashlib.sha256(account.encode("utf-8")).hexdigest()[:12])
+                    self._json(401, {"error": "account or password incorrect"})
+                    return
+                token = secrets.token_urlsafe(24)
+                expires = time.time() + 8 * 3600
+                sess = {"account": account, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"], "expires": expires}
+                SESSIONS[token] = sess
+                audit_event("auth.login", request_id=request_id, role=item["role"], account_hash=hashlib.sha256(account.encode("utf-8")).hexdigest()[:12])
+                self._json(200, {"token": token, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"]})
+                return
+            if path == "/api/auth/logout":
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if user:
+                    token = self.headers.get("Authorization", "")[7:].strip()
+                    SESSIONS.pop(token, None)
+                    audit_event("auth.logout", request_id=request_id, role=user["role"])
+                self._json(200, {"ok": True})
+                return
+            if path == "/api/app/chat":
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user:
+                    self._json(401, {"error": "unauthorized"})
+                    return
+                patient_id = str(payload.get("patient_id", "")).strip()
+                if patient_id not in user["patient_ids"]:
+                    audit_event("app.chat_denied", request_id=request_id, role=user["role"], patient_id=patient_id)
+                    self._json(403, {"error": "patient not allowed"})
+                    return
+                message = str(payload.get("message", "")).strip()
+                if not message:
+                    self._json(400, {"error": "message required"})
+                    return
+                result = ask_llm(message, {"name": PATIENTS[patient_id]["name"]}, payload.get("history") or [])
+                result["reply"] = mask_sensitive_text(result.get("reply", ""))
+                result["patient_id"] = patient_id
+                audit_event("app.chat", request_id=request_id, role=user["role"], patient_id=patient_id, source=result.get("source"), risk=result.get("risk"), needs_human=result.get("needs_human"))
+                self._json(200, result)
+                return
             if path == "/api/channel/message":
                 channel = str(payload.get("channel", "web")).strip().lower()
                 if channel not in CHANNELS:
