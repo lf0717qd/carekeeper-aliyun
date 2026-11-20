@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -34,6 +35,11 @@ try:
 except Exception:
     def mask_sensitive_text(text):
         return text
+
+try:
+    import store
+except Exception:
+    store = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -68,6 +74,8 @@ load_dotenv(ROOT.parent.parent / "agent-lab" / ".env")
 BASE_URL = os.getenv("BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 MODEL = os.getenv("MODEL", "glm-4-flash")
 API_KEY = os.getenv("API_KEY", "")
+AUTH_SECRET = os.getenv("AUTH_SECRET", "carekeeper-demo-secret-change-me")
+CHAT_REQUIRE_AUTH = os.getenv("CHAT_REQUIRE_AUTH", "1") != "0"
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
 
 CHANNELS = {
@@ -96,24 +104,56 @@ PATIENTS = {
            "alerts": [{"t": "今日 09:10", "text": "血氧 93%，已建议复测并联系家医", "level": "high", "handled": False}]},
 }
 
-SESSIONS = {}
+if store is not None:
+    try:
+        store.init(DEMO_USERS, PATIENTS)
+    except Exception as exc:  # noqa: BLE001
+        print("[store] init failed:", type(exc).__name__, file=sys.stderr)
+
+def make_token(item: dict) -> str:
+    payload = {
+        "account": item["account"],
+        "role": item["role"],
+        "name": item["name"],
+        "patient_ids": item["patient_ids"],
+        "exp": int(time.time()) + 8 * 3600,
+        "iat": int(time.time()),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    sig = hmac.new(AUTH_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+    return body + "." + sig
+
+
+def verify_token(token: str):
+    try:
+        body, sig = token.split(".", 1)
+        expected = hmac.new(AUTH_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        pad = "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(body + pad).decode("utf-8"))
+        if int(payload.get("exp", 0)) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
 
 
 def auth_user_from_header(header: str):
     if not header or not header.startswith("Bearer "):
         return None
-    token = header[7:].strip()
-    item = SESSIONS.get(token)
-    if not item:
-        return None
-    if item["expires"] < time.time():
-        SESSIONS.pop(token, None)
-        return None
-    return item
+    return verify_token(header[7:].strip())
 
 
 def user_patients(user):
-    return [PATIENTS[x] for x in user.get("patient_ids", []) if x in PATIENTS]
+    ids = user.get("patient_ids", [])
+    if store is not None:
+        try:
+            return store.get_patients(ids)
+        except Exception:
+            pass
+    return [PATIENTS[x] for x in ids if x in PATIENTS]
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
 ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
 
@@ -724,23 +764,19 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/auth/login":
                 account = str(payload.get("account", "")).strip()
                 password = str(payload.get("password", ""))
-                item = DEMO_USERS.get(account)
+                item = (store.get_user(account) if store is not None else None) or DEMO_USERS.get(account)
                 if not item or item["password"] != password:
                     audit_event("auth.login_failed", request_id=request_id, account_hash=hashlib.sha256(account.encode("utf-8")).hexdigest()[:12])
                     self._json(401, {"error": "account or password incorrect"})
                     return
-                token = secrets.token_urlsafe(24)
-                expires = time.time() + 8 * 3600
-                sess = {"account": account, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"], "expires": expires}
-                SESSIONS[token] = sess
+                sess = {"account": account, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"]}
+                token = make_token(sess)
                 audit_event("auth.login", request_id=request_id, role=item["role"], account_hash=hashlib.sha256(account.encode("utf-8")).hexdigest()[:12])
                 self._json(200, {"token": token, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"]})
                 return
             if path == "/api/auth/logout":
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
                 if user:
-                    token = self.headers.get("Authorization", "")[7:].strip()
-                    SESSIONS.pop(token, None)
                     audit_event("auth.logout", request_id=request_id, role=user["role"])
                 self._json(200, {"ok": True})
                 return
@@ -832,6 +868,11 @@ class Handler(SimpleHTTPRequestHandler):
                 audit_event("kb.search", request_id=request_id, query_len=len(query), query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest()[:12], count=len(results))
                 self._json(200, {"query": query, "count": len(results), "results": results})
                 return
+            if path in ("/api/chat", "/api/chat_stream") and CHAT_REQUIRE_AUTH:
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user:
+                    self._json(401, {"error": "unauthorized"})
+                    return
             message = str(payload.get("message", "")).strip()
             if not message:
                 self._json(400, {"error": "message required"})
