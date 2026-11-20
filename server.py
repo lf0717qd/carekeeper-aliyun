@@ -90,6 +90,7 @@ DEMO_USERS = {
     "13800000001": {"password": "123456", "role": "elder", "name": "陈婆婆", "patient_ids": ["chen"]},
     "13800000002": {"password": "123456", "role": "family", "name": "陈先生", "patient_ids": ["chen"]},
     "13800000003": {"password": "123456", "role": "doctor", "name": "李医生", "patient_ids": ["chen", "li"]},
+    "13800000009": {"password": "123456", "role": "admin", "name": "运营管理员", "patient_ids": []},
 }
 
 PATIENTS = {
@@ -706,8 +707,23 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _admin_user(self):
+        user = auth_user_from_header(self.headers.get("Authorization", ""))
+        if not user:
+            self._json(401, {"error": "unauthorized"})
+            return None
+        if user.get("role") != "admin":
+            self._json(403, {"error": "admin only"})
+            return None
+        return user
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/admin/overview":
+            if not self._admin_user():
+                return
+            self._json(200, store.admin_overview())
+            return
         if path == "/api/auth/me":
             user = auth_user_from_header(self.headers.get("Authorization", ""))
             if not user:
@@ -754,13 +770,33 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
+                user = self._admin_user()
+                if not user:
+                    return
+                if path == "/api/admin/feedback":
+                    store.update_feedback(int(payload.get("id", 0)), str(payload.get("status", "done")), str(payload.get("follow_up", ""))[:120])
+                elif path == "/api/admin/templates":
+                    store.save_template(int(payload.get("id", 0)), bool(payload.get("active", True)))
+                elif path == "/api/admin/annotations":
+                    store.update_annotation(int(payload.get("id", 0)), str(payload.get("status", "done")), str(payload.get("label", ""))[:40], str(payload.get("note", ""))[:120])
+                elif path == "/api/admin/releases":
+                    if payload.get("version"):
+                        store.add_release(str(payload["version"])[:20], int(payload.get("percent", 10)), str(payload.get("note", ""))[:80])
+                    else:
+                        store.set_release(int(payload.get("id", 0)), str(payload.get("status", "stable")), payload.get("percent"))
+                elif path == "/api/admin/terms":
+                    store.review_term(int(payload.get("id", 0)), str(payload.get("status", "approved")), str(payload.get("note", ""))[:120])
+                audit_event("admin.action", request_id=request_id, role="admin", action=path.rsplit("/", 1)[-1])
+                self._json(200, {"ok": True, "overview": store.admin_overview()})
+                return
             if path == "/api/auth/login":
                 account = str(payload.get("account", "")).strip()
                 password = str(payload.get("password", ""))
