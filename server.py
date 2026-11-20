@@ -285,6 +285,21 @@ def audit_event(event: str, **fields) -> None:
     print("[audit] " + json.dumps(record, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
+COGNITIVE_PATTERN = r"(记性差|脑退化|认知障碍|痴呆|唔认得人|迷路)"
+
+def cognitive_reply(text: str):
+    if re.search(COGNITIVE_PATTERN, text):
+        return {
+            "reply": "婆婆，记性差有好多原因，唔一定系脑退化。建议去医生或者记忆门诊评估；屋企注意防走失、防跌倒，药物最好由家人保管；如果突然好混乱、发烧或者脱水，尽快就医。",
+            "intent": "认知担忧",
+            "risk": "medium",
+            "needs_human": True,
+            "tool_calls": ["safety.cognitive"],
+            "follow_up": "建议医生/记忆门诊评估；防走失、防跌倒；突然混乱/发烧尽快就医。",
+            "source": "rule_cognitive",
+        }
+    return None
+
 def has_red_flag(text: str) -> bool:
     return any(word in text for word in RED_FLAGS)
 
@@ -438,6 +453,9 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     myth = myth_reply(message)
     if myth:
         return myth
+    cognitive = cognitive_reply(message)
+    if cognitive:
+        return cognitive
 
     bp_reply = bp_reading_reply(message, history)
     if bp_reply:
