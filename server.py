@@ -34,11 +34,6 @@ except Exception:
     def mask_sensitive_text(text):
         return text
 
-try:
-    from wecom import send_webhook as wecom_send_webhook, send_app_text as wecom_send_app
-except Exception:
-    wecom_send_webhook = None
-    wecom_send_app = None
 
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -73,17 +68,12 @@ BASE_URL = os.getenv("BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 MODEL = os.getenv("MODEL", "glm-4-flash")
 API_KEY = os.getenv("API_KEY", "")
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
-WECOM_WEBHOOK_URL = os.getenv("WECOM_WEBHOOK_URL", "").strip()
-WECOM_CORP_ID = os.getenv("WECOM_CORP_ID", "").strip()
-WECOM_AGENT_ID = os.getenv("WECOM_AGENT_ID", "").strip()
-WECOM_SECRET = os.getenv("WECOM_SECRET", "").strip()
-WECOM_TOUSER = os.getenv("WECOM_TOUSER", "").strip()
 
 CHANNELS = {
     "web": {"label": "老人端 Web", "mode": "native", "transport": "HTTPS"},
     "family": {"label": "家属端", "mode": "native", "transport": "HTTPS"},
     "phone": {"label": "电话/IVR", "mode": "adapter_demo", "transport": "SIP/电话网关（未接）"},
-    "wechat": {"label": "微信/企业微信", "mode": "adapter_demo", "transport": "企业微信可配；公众号未接"},
+    "wechat": {"label": "微信（本期不做）", "mode": "adapter_demo", "transport": "企业微信不采用"},
     "community": {"label": "社区/家医", "mode": "adapter_demo", "transport": "工单/电话（未接）"},
 }
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
@@ -273,26 +263,13 @@ def myth_reply(text: str):
 def send_alert(event: str, **fields) -> None:
     """Optional Feishu/DingTalk webhook; metadata only, no raw message."""
     url = ALERT_WEBHOOK_URL
-    app_ready = bool(WECOM_CORP_ID and WECOM_AGENT_ID and WECOM_SECRET and WECOM_TOUSER and wecom_send_app)
-    if not url and not WECOM_WEBHOOK_URL and not app_ready:
+    if not url:
         return
     parts = ["[乡音健康管家]", event]
     for key in ("request_id", "source", "risk", "needs_human", "intent", "error"):
         if key in fields and fields[key] not in (None, ""):
             parts.append(f"{key}={fields[key]}")
     text = " ".join(parts)
-    if WECOM_WEBHOOK_URL and wecom_send_webhook:
-        try:
-            wecom_send_webhook(WECOM_WEBHOOK_URL, text)
-            return
-        except Exception as exc:  # noqa: BLE001
-            print("[alert] wecom webhook error:", type(exc).__name__, file=sys.stderr)
-    if app_ready:
-        try:
-            wecom_send_app(WECOM_CORP_ID, WECOM_SECRET, WECOM_AGENT_ID, WECOM_TOUSER, text)
-            return
-        except Exception as exc:  # noqa: BLE001
-            print("[alert] wecom app error:", type(exc).__name__, file=sys.stderr)
     if "feishu" in url or "larksuite" in url:
         payload = {"msg_type": "text", "content": {"text": text}}
     elif "dingtalk" in url:
@@ -653,10 +630,6 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/api/wecom/status":
-            mode = "webhook" if WECOM_WEBHOOK_URL else ("app" if (WECOM_CORP_ID and WECOM_AGENT_ID and WECOM_SECRET and WECOM_TOUSER) else "none")
-            self._json(200, {"configured": mode != "none", "mode": mode})
-            return
         if path == "/api/channels":
             self._json(200, {"channels": [{"id": k, **v} for k, v in CHANNELS.items()]})
             return
