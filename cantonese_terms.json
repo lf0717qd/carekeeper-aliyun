@@ -73,7 +73,7 @@
  },
  {
   "term": "尿片",
-  "standard": "失禁护理"
+  "standard": "失禁 护理"
  },
  {
   "term": "痰",
@@ -93,7 +93,7 @@
  },
  {
   "term": "白车",
-  "standard": "救护车"
+  "standard": "救护车 急救 120 跌倒"
  },
  {
   "term": "急症室",
@@ -145,7 +145,7 @@
  },
  {
   "term": "脑退化",
-  "standard": "认知障碍"
+  "standard": "认知 痴呆 记忆"
  },
  {
   "term": "中风",
@@ -209,7 +209,7 @@
  },
  {
   "term": "换片",
-  "standard": "更换尿片"
+  "standard": "失禁 护理 更换"
  },
  {
   "term": "喂饭",
@@ -397,6 +397,206 @@
  },
  {
   "term": "记性差",
-  "standard": "记忆下降"
+  "standard": "认知 记忆 痴呆"
+ },
+ {
+  "term": "起身",
+  "standard": "起床"
+ },
+ {
+  "term": "落床",
+  "standard": "下床"
+ },
+ {
+  "term": "坐低",
+  "standard": "坐下"
+ },
+ {
+  "term": "站起",
+  "standard": "站立"
+ },
+ {
+  "term": "扶住",
+  "standard": "搀扶"
+ },
+ {
+  "term": "拖手",
+  "standard": "牵手"
+ },
+ {
+  "term": "过床",
+  "standard": "转移"
+ },
+ {
+  "term": "气垫床",
+  "standard": "防压床垫"
+ },
+ {
+  "term": "抽痰机",
+  "standard": "吸痰机"
+ },
+ {
+  "term": "血糖机",
+  "standard": "血糖仪"
+ },
+ {
+  "term": "针筒",
+  "standard": "注射器"
+ },
+ {
+  "term": "消毒药水",
+  "standard": "消毒液"
+ },
+ {
+  "term": "唔够力",
+  "standard": "乏力"
+ },
+ {
+  "term": "行唔到",
+  "standard": "行走困难"
+ },
+ {
+  "term": "企唔稳",
+  "standard": "站立不稳"
+ },
+ {
+  "term": "坐唔稳",
+  "standard": "坐位不稳"
+ },
+ {
+  "term": "转身难",
+  "standard": "转身困难"
+ },
+ {
+  "term": "起身难",
+  "standard": "起床困难"
+ },
+ {
+  "term": "落床难",
+  "standard": "下床困难"
+ },
+ {
+  "term": "瞓唔着",
+  "standard": "失眠"
+ },
+ {
+  "term": "心情差",
+  "standard": "情绪低落"
+ },
+ {
+  "term": "唔想食",
+  "standard": "食欲下降"
+ },
+ {
+  "term": "消瘦",
+  "standard": "体重下降"
+ },
+ {
+  "term": "屙唔出",
+  "standard": "便秘"
+ },
+ {
+  "term": "肚痛",
+  "standard": "腹痛"
+ },
+ {
+  "term": "反胃",
+  "standard": "恶心"
+ },
+ {
+  "term": "行路飘",
+  "standard": "步态不稳"
+ },
+ {
+  "term": "唔认得人",
+  "standard": "认知障碍"
+ },
+ {
+  "term": "吞咽难",
+  "standard": "吞咽困难"
+ },
+ {
+  "term": "呛水",
+  "standard": "呛咳"
+ },
+ {
+  "term": "卡住",
+  "standard": "哽噎"
+ },
+ {
+  "term": "打嗝",
+  "standard": "嗳气"
+ },
+ {
+  "term": "放屁多",
+  "standard": "排气多"
+ },
+ {
+  "term": "屙烂屎",
+  "standard": "腹泻"
+ },
+ {
+  "term": "屙硬屎",
+  "standard": "便秘"
+ },
+ {
+  "term": "脚痹",
+  "standard": "麻木"
+ },
+ {
+  "term": "脚趾黑",
+  "standard": "发黑"
+ },
+ {
+  "term": "伤口臭",
+  "standard": "感染"
+ },
+ {
+  "term": "伤口出水",
+  "standard": "渗液"
+ },
+ {
+  "term": "伤口埋唔到",
+  "standard": "伤口不愈合"
+ },
+ {
+  "term": "洗伤口",
+  "standard": "伤口清洁"
+ },
+ {
+  "term": "四脚拐",
+  "standard": "助行器"
+ },
+ {
+  "term": "抽痰",
+  "standard": "吸痰"
+ },
+ {
+  "term": "氧气",
+  "standard": "吸氧"
+ },
+ {
+  "term": "喘",
+  "standard": "气喘"
+ },
+ {
+  "term": "无胃口",
+  "standard": "食欲下降"
+ },
+ {
+  "term": "疴血",
+  "standard": "便血"
+ },
+ {
+  "term": "扯鼻鼾",
+  "standard": "打鼾"
+ },
+ {
+  "term": "发噩梦",
+  "standard": "噩梦"
+ },
+ {
+  "term": "脚抽筋",
+  "standard": "肌肉痉挛"
  }
 ]
