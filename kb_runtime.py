@@ -23,6 +23,15 @@ SYN = {
 }
 
 
+# Cantonese colloquial term base (FR-52); file bundled next to this module.
+try:
+    _terms = json.loads((BASE / "cantonese_terms.json").read_text(encoding="utf-8"))
+    _extra = {str(x["term"]): str(x["standard"]) for x in _terms if x.get("term") and x.get("standard")}
+    SYN = {**_extra, **SYN}
+except Exception:
+    _extra = {}
+
+
 def tokenize(text: str):
     text = (text or "").lower()
     chars = re.findall(r"[\u4e00-\u9fff]", text)
