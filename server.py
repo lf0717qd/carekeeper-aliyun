@@ -649,10 +649,13 @@ class Handler(SimpleHTTPRequestHandler):
             history = payload.get("history") or []
             result = ask_llm(message, profile, history)
             audit_event("chat.response", request_id=request_id, message_len=len(message), message_hash=hashlib.sha256(message.encode("utf-8")).hexdigest()[:12], source=result.get("source"), risk=result.get("risk"), needs_human=result.get("needs_human"), intent=result.get("intent"))
+            if result.get("risk") == "high":
+                audit_event("alert.high_risk", request_id=request_id, source=result.get("source"), risk="high", needs_human=result.get("needs_human"), intent=result.get("intent"))
             self._json(200, result)
         except Exception as exc:  # noqa: BLE001
             print("[api] error:", repr(exc), file=sys.stderr)
             audit_event("api.error", request_id=request_id, error=type(exc).__name__)
+            audit_event("alert.api_error", request_id=request_id, error=type(exc).__name__)
             self._json(200, fallback("", "服务异常: " + type(exc).__name__))
 
     def log_message(self, fmt: str, *args) -> None:
