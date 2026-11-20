@@ -601,13 +601,25 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path == "/api/audit/event":
+                event = str(payload.get("event", "")).strip()
+                allowed = {"consent.authorize", "consent.revoke", "privacy.delete", "report.send", "ai.identity"}
+                if event not in allowed:
+                    self._json(400, {"error": "event not allowed"})
+                    return
+                action = str(payload.get("action", ""))[:40]
+                detail = str(payload.get("detail", ""))[:80]
+                audit_event("frontend.audit", request_id=request_id, client_event=event, action=action,
+                            detail_hash=hashlib.sha256(detail.encode("utf-8")).hexdigest()[:12])
+                self._json(200, {"ok": True})
+                return
             if path == "/api/asr":
                 result = transcribe(str(payload.get("audio_base64", "")))
                 self._json(200, result)
