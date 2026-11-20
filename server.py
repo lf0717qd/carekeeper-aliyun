@@ -41,6 +41,11 @@ try:
 except Exception:
     store = None
 
+try:
+    import g2p
+except Exception:
+    g2p = None
+
 
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -770,13 +775,28 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path == "/api/pronounce":
+                text = str(payload.get("text", "")).strip()
+                if not text:
+                    self._json(400, {"error": "text required"})
+                    return
+                if g2p is None:
+                    self._json(501, {"error": "g2p not available"})
+                    return
+                try:
+                    result = g2p.pronounce(text)
+                except Exception as exc:  # noqa: BLE001
+                    self._json(500, {"error": "g2p failed: " + type(exc).__name__})
+                    return
+                self._json(200, result)
+                return
             if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
                 user = self._admin_user()
                 if not user:
