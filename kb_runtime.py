@@ -97,6 +97,20 @@ def bm25(q: str, top_k=5, allowed_status=("draft",), home_only=True):
         # glucose queries: HYPOG chapter must outrank wound/diabetes-foot chunks
         if re.search(r"(血糖|低血糖|高血糖|3\.9|mmol)", q) and c.get("doc_id") == "KB-HYPOG-001":
             score += 16
+        text_all = c.get("section_path", "") + " " + c.get("text", "")
+        if re.search(r"(换片|尿片|标尿|尿失禁|屁股红)", q):
+            if any(k in text_all for k in ("失禁", "尿片", "皮炎")):
+                score += 12
+            if "造口" in text_all and "造口" not in q:
+                score -= 10
+            if c.get("doc_id") == "KB-WOUND-001" and "失禁" in text_all:
+                score += 6
+        if re.search(r"(记性差|脑退化|认知|痴呆)", q):
+            if any(k in text_all for k in ("认知", "痴呆", "记忆")):
+                score += 6
+        if re.search(r"(白车|救护车)", q):
+            if any(k in text_all for k in ("跌倒", "急救", "120")):
+                score += 4
         if score > 0:
             scores.append((score, c))
     scores.sort(key=lambda x: -x[0])
