@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from difflib import SequenceMatcher
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -241,6 +243,16 @@ def myth_reply(text: str):
                 "source": "rule_myth",
             }
     return None
+
+def audit_event(event: str, **fields) -> None:
+    """Structured audit line; never include raw message/audio/query."""
+    record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "event": event}
+    for key, value in fields.items():
+        if key in ("message", "query", "audio_base64", "reply"):
+            continue
+        record[key] = value
+    print("[audit] " + json.dumps(record, ensure_ascii=False, separators=(",", ":")), flush=True)
+
 
 def has_red_flag(text: str) -> bool:
     return any(word in text for word in RED_FLAGS)
@@ -592,6 +604,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search"):
             self._json(404, {"error": "not found"})
             return
+        request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -610,6 +623,7 @@ class Handler(SimpleHTTPRequestHandler):
                     top_k = 5
                 top_k = max(1, min(10, top_k))
                 results = kb_search(query, top_k=top_k, use_rule=True) if kb_search else []
+                audit_event("kb.search", request_id=request_id, query_len=len(query), query_hash=hashlib.sha256(query.encode("utf-8")).hexdigest()[:12], count=len(results))
                 self._json(200, {"query": query, "count": len(results), "results": results})
                 return
             message = str(payload.get("message", "")).strip()
@@ -622,9 +636,11 @@ class Handler(SimpleHTTPRequestHandler):
             profile = payload.get("profile") or {}
             history = payload.get("history") or []
             result = ask_llm(message, profile, history)
+            audit_event("chat.response", request_id=request_id, message_len=len(message), message_hash=hashlib.sha256(message.encode("utf-8")).hexdigest()[:12], source=result.get("source"), risk=result.get("risk"), needs_human=result.get("needs_human"), intent=result.get("intent"))
             self._json(200, result)
         except Exception as exc:  # noqa: BLE001
             print("[api] error:", repr(exc), file=sys.stderr)
+            audit_event("api.error", request_id=request_id, error=type(exc).__name__)
             self._json(200, fallback("", "服务异常: " + type(exc).__name__))
 
     def log_message(self, fmt: str, *args) -> None:
