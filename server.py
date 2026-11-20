@@ -29,7 +29,7 @@ except Exception:
     kb_search = None
 
 try:
-    from formatting import mask_sensitive_text
+    from formatting import mask_sensitive_text, format_for_speech
 except Exception:
     def mask_sensitive_text(text):
         return text
@@ -632,13 +632,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path == "/api/format":
+                text = str(payload.get("text", ""))[:2000]
+                masked = mask_sensitive_text(text)
+                self._json(200, {"ok": True, "raw_len": len(text), "masked": masked, "speech": format_for_speech(masked)})
+                return
             if path == "/api/audit/event":
                 event = str(payload.get("event", "")).strip()
                 allowed = {"consent.authorize", "consent.revoke", "privacy.delete", "report.send", "ai.identity"}
