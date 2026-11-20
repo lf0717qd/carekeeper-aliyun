@@ -67,6 +67,14 @@ BASE_URL = os.getenv("BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 MODEL = os.getenv("MODEL", "glm-4-flash")
 API_KEY = os.getenv("API_KEY", "")
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+
+CHANNELS = {
+    "web": {"label": "老人端 Web", "mode": "native", "transport": "HTTPS"},
+    "family": {"label": "家属端", "mode": "native", "transport": "HTTPS"},
+    "phone": {"label": "电话/IVR", "mode": "adapter_demo", "transport": "SIP/电话网关（未接）"},
+    "wechat": {"label": "微信", "mode": "adapter_demo", "transport": "公众号/企业微信（未接）"},
+    "community": {"label": "社区/家医", "mode": "adapter_demo", "transport": "工单/电话（未接）"},
+}
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
 ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
 
@@ -621,6 +629,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/channels":
+            self._json(200, {"channels": [{"id": k, **v} for k, v in CHANNELS.items()]})
+            return
         if path == "/api/health":
             self._json(200, {
                 "ok": bool(API_KEY),
@@ -650,13 +661,46 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if path == "/api/channel/message":
+                channel = str(payload.get("channel", "web")).strip().lower()
+                if channel not in CHANNELS:
+                    self._json(400, {"error": "unknown channel"})
+                    return
+                message = str(payload.get("message", "")).strip()
+                if not message:
+                    self._json(400, {"error": "message required"})
+                    return
+                profile = payload.get("profile") or {}
+                history = payload.get("history") or []
+                user_key = str(payload.get("user_id", request_id))[:80]
+                session_id = channel + ":" + hashlib.sha256(user_key.encode("utf-8")).hexdigest()[:12]
+                result = ask_llm(message, profile, history)
+                result["reply"] = mask_sensitive_text(result.get("reply", ""))
+                result.update({
+                    "channel": channel,
+                    "channel_label": CHANNELS[channel]["label"],
+                    "channel_mode": CHANNELS[channel]["mode"],
+                    "session_id": session_id,
+                    "handoff": {
+                        "needed": bool(result.get("risk") == "high" or result.get("needs_human")),
+                        "target": "120/家属/值班" if result.get("risk") == "high" else "家属/社区",
+                        "status": "simulated",
+                    },
+                })
+                audit_event("channel.message", request_id=request_id, channel=channel,
+                            session_id=session_id, message_len=len(message),
+                            message_hash=hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+                            source=result.get("source"), risk=result.get("risk"),
+                            needs_human=result.get("needs_human"))
+                self._json(200, result)
+                return
             if path == "/api/format":
                 text = str(payload.get("text", ""))[:2000]
                 masked = mask_sensitive_text(text)
