@@ -85,6 +85,9 @@ def bm25(q: str, top_k=5, allowed_status=("draft",), home_only=True):
             score += 8
         if "家庭病床" in q and "家庭病床" in c.get("title", ""):
             score += 12
+        # glucose queries: HYPOG chapter must outrank wound/diabetes-foot chunks
+        if re.search(r"(血糖|低血糖|高血糖|3\.9|mmol)", q) and c.get("doc_id") == "KB-HYPOG-001":
+            score += 16
         if score > 0:
             scores.append((score, c))
     scores.sort(key=lambda x: -x[0])
