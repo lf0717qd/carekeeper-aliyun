@@ -28,6 +28,12 @@ try:
 except Exception:
     kb_search = None
 
+try:
+    from formatting import mask_sensitive_text
+except Exception:
+    def mask_sensitive_text(text):
+        return text
+
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("FC_SERVER_PORT", os.getenv("PORT", "9000")))
@@ -528,7 +534,7 @@ def stream_llm(message: str, profile: dict, history: list[dict]):
     started = time.time()
     data = ask_llm(message, profile, history)
     yield "meta", {"source": data.get("source", "llm"), "model": MODEL, "risk": data.get("risk", "low"), "needs_human": data.get("needs_human", False)}
-    yield "delta", {"text": data.get("reply", "")}
+    yield "delta", {"text": mask_sensitive_text(data.get("reply", ""))}
     yield "done", {
         "source": data.get("source", "llm"),
         "risk": data.get("risk", "low"),
@@ -673,6 +679,7 @@ class Handler(SimpleHTTPRequestHandler):
             profile = payload.get("profile") or {}
             history = payload.get("history") or []
             result = ask_llm(message, profile, history)
+            result["reply"] = mask_sensitive_text(result.get("reply", ""))
             audit_event("chat.response", request_id=request_id, message_len=len(message), message_hash=hashlib.sha256(message.encode("utf-8")).hexdigest()[:12], source=result.get("source"), risk=result.get("risk"), needs_human=result.get("needs_human"), intent=result.get("intent"))
             if result.get("risk") == "high":
                 audit_event("alert.high_risk", request_id=request_id, source=result.get("source"), risk="high", needs_human=result.get("needs_human"), intent=result.get("intent"))
