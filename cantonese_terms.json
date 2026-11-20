@@ -198,5 +198,205 @@
  {
   "term": "胃喉",
   "standard": "鼻胃管"
+ },
+ {
+  "term": "冲凉",
+  "standard": "洗澡"
+ },
+ {
+  "term": "抹身",
+  "standard": "擦浴"
+ },
+ {
+  "term": "换片",
+  "standard": "更换尿片"
+ },
+ {
+  "term": "喂饭",
+  "standard": "协助进食"
+ },
+ {
+  "term": "哽亲",
+  "standard": "呛咳"
+ },
+ {
+  "term": "拗柴",
+  "standard": "扭伤"
+ },
+ {
+  "term": "跌亲",
+  "standard": "跌倒"
+ },
+ {
+  "term": "撞亲",
+  "standard": "外伤"
+ },
+ {
+  "term": "损手",
+  "standard": "伤口"
+ },
+ {
+  "term": "含脓",
+  "standard": "化脓"
+ },
+ {
+  "term": "拿药",
+  "standard": "取药"
+ },
+ {
+  "term": "配药",
+  "standard": "取药"
+ },
+ {
+  "term": "食错药",
+  "standard": "误服"
+ },
+ {
+  "term": "打针",
+  "standard": "注射"
+ },
+ {
+  "term": "吊针",
+  "standard": "输液"
+ },
+ {
+  "term": "插喉",
+  "standard": "管饲"
+ },
+ {
+  "term": "尿喉",
+  "standard": "导尿管"
+ },
+ {
+  "term": "便壶",
+  "standard": "便盆"
+ },
+ {
+  "term": "床尿",
+  "standard": "尿失禁"
+ },
+ {
+  "term": "扶抱",
+  "standard": "转移"
+ },
+ {
+  "term": "助行架",
+  "standard": "助行器"
+ },
+ {
+  "term": "防滑",
+  "standard": "防滑"
+ },
+ {
+  "term": "扶手",
+  "standard": "扶手"
+ },
+ {
+  "term": "夜灯",
+  "standard": "夜灯"
+ },
+ {
+  "term": "床栏",
+  "standard": "床栏"
+ },
+ {
+  "term": "约束",
+  "standard": "约束"
+ },
+ {
+  "term": "翻身",
+  "standard": "翻身"
+ },
+ {
+  "term": "造口袋",
+  "standard": "造口"
+ },
+ {
+  "term": "呕",
+  "standard": "呕吐"
+ },
+ {
+  "term": "晕",
+  "standard": "眩晕"
+ },
+ {
+  "term": "心跳",
+  "standard": "心率"
+ },
+ {
+  "term": "血氧",
+  "standard": "血氧"
+ },
+ {
+  "term": "入院",
+  "standard": "住院"
+ },
+ {
+  "term": "长者中心",
+  "standard": "长者服务中心"
+ },
+ {
+  "term": "食得少",
+  "standard": "食欲下降"
+ },
+ {
+  "term": "瘦",
+  "standard": "体重下降"
+ },
+ {
+  "term": "唔够气",
+  "standard": "气促"
+ },
+ {
+  "term": "咳痰",
+  "standard": "咳嗽 咳痰"
+ },
+ {
+  "term": "流鼻水",
+  "standard": "流涕"
+ },
+ {
+  "term": "眼朦",
+  "standard": "视物模糊"
+ },
+ {
+  "term": "耳聋",
+  "standard": "听力下降"
+ },
+ {
+  "term": "假牙",
+  "standard": "义齿"
+ },
+ {
+  "term": "吞口水",
+  "standard": "吞咽"
+ },
+ {
+  "term": "口干",
+  "standard": "口干"
+ },
+ {
+  "term": "生痱滋",
+  "standard": "口腔溃疡"
+ },
+ {
+  "term": "晕低",
+  "standard": "晕厥"
+ },
+ {
+  "term": "发羊吊",
+  "standard": "癫痫"
+ },
+ {
+  "term": "手震",
+  "standard": "震颤"
+ },
+ {
+  "term": "脚软",
+  "standard": "乏力"
+ },
+ {
+  "term": "记性差",
+  "standard": "记忆下降"
  }
 ]
