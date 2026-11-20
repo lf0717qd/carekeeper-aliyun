@@ -60,6 +60,7 @@ load_dotenv(ROOT.parent.parent / "agent-lab" / ".env")
 BASE_URL = os.getenv("BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 MODEL = os.getenv("MODEL", "glm-4-flash")
 API_KEY = os.getenv("API_KEY", "")
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
 ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
 
@@ -243,6 +244,30 @@ def myth_reply(text: str):
                 "source": "rule_myth",
             }
     return None
+
+def send_alert(event: str, **fields) -> None:
+    """Optional Feishu/DingTalk webhook; metadata only, no raw message."""
+    url = ALERT_WEBHOOK_URL
+    if not url:
+        return
+    parts = ["[乡音健康管家]", event]
+    for key in ("request_id", "source", "risk", "needs_human", "intent", "error"):
+        if key in fields and fields[key] not in (None, ""):
+            parts.append(f"{key}={fields[key]}")
+    text = " ".join(parts)
+    if "feishu" in url or "larksuite" in url:
+        payload = {"msg_type": "text", "content": {"text": text}}
+    elif "dingtalk" in url:
+        payload = {"msgtype": "text", "text": {"content": text}}
+    else:
+        payload = {"event": event, "text": text, **{k: v for k, v in fields.items() if k in ("request_id", "source", "risk", "needs_human", "intent", "error")}}
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception as exc:  # noqa: BLE001
+        print("[alert] webhook error:", type(exc).__name__, file=sys.stderr)
+
 
 def audit_event(event: str, **fields) -> None:
     """Structured audit line; never include raw message/audio/query."""
@@ -651,11 +676,13 @@ class Handler(SimpleHTTPRequestHandler):
             audit_event("chat.response", request_id=request_id, message_len=len(message), message_hash=hashlib.sha256(message.encode("utf-8")).hexdigest()[:12], source=result.get("source"), risk=result.get("risk"), needs_human=result.get("needs_human"), intent=result.get("intent"))
             if result.get("risk") == "high":
                 audit_event("alert.high_risk", request_id=request_id, source=result.get("source"), risk="high", needs_human=result.get("needs_human"), intent=result.get("intent"))
+                send_alert("alert.high_risk", request_id=request_id, source=result.get("source"), risk="high", needs_human=result.get("needs_human"), intent=result.get("intent"))
             self._json(200, result)
         except Exception as exc:  # noqa: BLE001
             print("[api] error:", repr(exc), file=sys.stderr)
             audit_event("api.error", request_id=request_id, error=type(exc).__name__)
             audit_event("alert.api_error", request_id=request_id, error=type(exc).__name__)
+            send_alert("alert.api_error", request_id=request_id, error=type(exc).__name__)
             self._json(200, fallback("", "服务异常: " + type(exc).__name__))
 
     def log_message(self, fmt: str, *args) -> None:
