@@ -167,6 +167,8 @@ def user_patients(user):
     return [PATIENTS[x] for x in ids if x in PATIENTS]
 ASR_MODEL = os.getenv("ASR_MODEL", "glm-asr-2512")
 ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
+ASR_PROVIDER = os.getenv("ASR_PROVIDER", "zhipu")
+ASR_CONFIDENCE_THRESHOLD = float(os.getenv("ASR_CONFIDENCE_THRESHOLD", "0.55"))
 
 RED_FLAGS = [
     "胸痛", "胸口痛", "心口痛", "心口闷", "胸闷", "唞唔到气", "透唔到气", "呼吸困难", "嘴唇发紫",
@@ -686,10 +688,43 @@ def transcribe(audio_base64: str) -> dict:
     started = time.time()
     with urllib.request.urlopen(request, timeout=60) as response:
         payload = json.loads(response.read().decode("utf-8"))
+    text = str(payload.get("text", "")).strip()
+    raw_conf = payload.get("confidence")
+    score = None
+    if isinstance(raw_conf, (int, float)):
+        score = float(raw_conf)
+    elif isinstance(raw_conf, dict):
+        try:
+            score = float(raw_conf.get("score")) if raw_conf.get("score") is not None else None
+        except Exception:
+            score = None
+    nbest = payload.get("nbest") if isinstance(payload.get("nbest"), list) else []
+    confidence = {
+        "available": score is not None,
+        "score": score,
+        "threshold": ASR_CONFIDENCE_THRESHOLD,
+        "source": ASR_PROVIDER,
+        "reason": None if score is not None else "provider_does_not_expose_confidence",
+    }
     return {
-        "text": str(payload.get("text", "")).strip(),
+        "text": text,
         "model": ASR_MODEL,
+        "provider": ASR_PROVIDER,
         "latency_ms": round((time.time() - started) * 1000),
+        "confidence": confidence,
+        "nbest": nbest,
+        "low_confidence": bool(score is not None and score < ASR_CONFIDENCE_THRESHOLD),
+    }
+
+
+def asr_capabilities() -> dict:
+    return {
+        "provider": ASR_PROVIDER,
+        "model": ASR_MODEL,
+        "confidence": ASR_PROVIDER not in ("zhipu",),
+        "nbest": ASR_PROVIDER not in ("zhipu",),
+        "threshold": ASR_CONFIDENCE_THRESHOLD,
+        "schema_version": "1.0",
     }
 
 
@@ -756,6 +791,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(401, {"error": "unauthorized"})
                 return
             self._json(200, {"patients": user_patients(user)})
+            return
+        if path == "/api/asr/capabilities":
+            self._json(200, asr_capabilities())
             return
         if path == "/api/channels":
             self._json(200, {"channels": [{"id": k, **v} for k, v in CHANNELS.items()]})
