@@ -25,6 +25,7 @@ def init(users: dict, patients: dict) -> None:
         c.execute("CREATE TABLE IF NOT EXISTS terms (id INTEGER PRIMARY KEY AUTOINCREMENT, term TEXT, standard TEXT, kind TEXT, status TEXT, reviewer TEXT, note TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS hotwords (id INTEGER PRIMARY KEY AUTOINCREMENT, wrong TEXT, right TEXT, active INTEGER, note TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS handoffs (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, session_id TEXT, reason TEXT, status TEXT, owner TEXT, created_at TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS features (name TEXT PRIMARY KEY, enabled INTEGER, note TEXT)")
         for account, u in users.items():
             c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)", (account, u["password"], u["role"], u["name"], json.dumps(u["patient_ids"], ensure_ascii=False)))
         sites = {
@@ -66,6 +67,9 @@ def init(users: dict, patients: dict) -> None:
                 ("v1.2.00", 10, "canary", "运营后台灰度", "2026-11-20 22:00"),
             ]
             c.executemany("INSERT INTO releases (version,percent,status,note,created_at) VALUES (?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM features").fetchone()[0] == 0:
+            seed = [("agent_enabled", 1, "Agent turn"), ("llm_enabled", 1, "LLM 回答"), ("kb_enabled", 1, "KB 检索"), ("tts_enabled", 1, "语音播报"), ("maintenance", 0, "维护模式")]
+            c.executemany("INSERT INTO features (name,enabled,note) VALUES (?,?,?)", seed)
         if c.execute("SELECT COUNT(*) FROM handoffs").fetchone()[0] == 0:
             c.execute("INSERT INTO handoffs (patient_id,session_id,reason,status,owner,created_at) VALUES (?,?,?,?,?,?)", ("chen", "demo:chen", "2次听唔明", "open", "", "2026-11-21 12:00"))
         if c.execute("SELECT COUNT(*) FROM hotwords").fetchone()[0] == 0:
@@ -133,6 +137,7 @@ def admin_overview():
         "sites": [json.loads(r["data"]) for r in _rows("SELECT data FROM sites ORDER BY id")],
         "hotwords": _rows("SELECT * FROM hotwords ORDER BY id"),
         "handoffs": _rows("SELECT * FROM handoffs ORDER BY id DESC"),
+        "features": _rows("SELECT * FROM features ORDER BY name"),
     }
 
 
@@ -191,3 +196,11 @@ def add_handoff(patient_id: str, session_id: str, reason: str):
 
 def update_handoff(hid: int, status: str, owner: str = ""):
     _exec("UPDATE handoffs SET status=?, owner=? WHERE id=?", (status, owner, hid))
+
+
+def get_features():
+    return _rows("SELECT * FROM features ORDER BY name")
+
+
+def set_feature(name: str, enabled: bool):
+    _exec("UPDATE features SET enabled=? WHERE name=?", (1 if enabled else 0, name))
