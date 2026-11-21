@@ -851,7 +851,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -929,6 +929,27 @@ class Handler(SimpleHTTPRequestHandler):
                 if user:
                     audit_event("auth.logout", request_id=request_id, role=user["role"])
                 self._json(200, {"ok": True})
+                return
+            if path == "/api/handoff":
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user:
+                    self._json(401, {"error": "unauthorized"})
+                    return
+                patient_id = str(payload.get("patient_id", "")).strip()
+                if patient_id not in user["patient_ids"]:
+                    self._json(403, {"error": "patient not allowed"})
+                    return
+                reason = str(payload.get("reason", "elder_button"))[:60]
+                hid = None
+                if store is not None:
+                    try:
+                        store.add_handoff(patient_id, user["account"] + ":" + patient_id, reason)
+                        latest = store.admin_overview().get("handoffs") or []
+                        hid = latest[0]["id"] if latest else None
+                    except Exception:
+                        pass
+                audit_event("handoff.request", request_id=request_id, role=user["role"], patient_id=patient_id, reason=reason, handoff_id=hid)
+                self._json(200, {"ok": True, "handoff_id": hid, "status": "open"})
                 return
             if path == "/api/agent/turn":
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
