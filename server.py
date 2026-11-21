@@ -57,6 +57,17 @@ except Exception:
     agent = None
 
 AGENT_SESSIONS = {}
+RATE_BUCKETS = {}
+
+
+def rate_ok(key: str, limit: int, window: int = 60) -> bool:
+    now = time.time()
+    arr = RATE_BUCKETS.setdefault(key, [])
+    arr[:] = [t for t in arr if now - t < window]
+    if len(arr) >= limit:
+        return False
+    arr.append(now)
+    return True
 
 
 ROOT = Path(__file__).resolve().parent
@@ -949,6 +960,11 @@ class Handler(SimpleHTTPRequestHandler):
                 if user:
                     audit_event("auth.logout", request_id=request_id, role=user["role"])
                 self._json(200, {"ok": True})
+                return
+            ip = (self.client_address[0] if self.client_address else "unknown")
+            limits = {"/api/chat": 120, "/api/agent/turn": 60, "/api/asr": 20, "/api/handoff": 10}
+            if path in limits and not rate_ok(ip + ":" + path, limits[path]):
+                self._json(429, {"error": "rate_limited", "retry_after": 60})
                 return
             if path in ("/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary"):
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
