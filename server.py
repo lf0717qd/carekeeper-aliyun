@@ -1077,6 +1077,9 @@ class Handler(SimpleHTTPRequestHandler):
                 elif action == "kb" and result.get("intent") == "glucose" and result.get("slots", {}).get("glucose") is not None:
                     result["reply"] = "婆婆，血糖 " + str(result["slots"].get("glucose")) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
                     source = "agent_glucose"
+                elif action == "kb" and result.get("intent") == "medication":
+                    result["reply"] = "婆婆，我唔知道你今日食咗未。你可以话我知边只药、食咗未；我帮你打卡。唔好自己加药、减药或者停药。"
+                    source = "agent_medication"
                 elif action == "kb":
                     q = text
                     rows = kb_search(q, top_k=2, use_rule=True) if kb_search else []
