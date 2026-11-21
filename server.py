@@ -164,6 +164,19 @@ def auth_user_from_header(header: str):
     return verify_token(header[7:].strip())
 
 
+def feature_on(name: str) -> bool:
+    if store is None:
+        return True
+    try:
+        rows = store.get_features()
+        for r in rows:
+            if r["name"] == name:
+                return bool(r["enabled"])
+    except Exception:
+        pass
+    return True
+
+
 def user_patients(user):
     ids = user.get("patient_ids", [])
     if store is not None:
@@ -799,6 +812,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._json(200, {"patients": user_patients(user)})
             return
+        if path == "/api/features":
+            rows = store.get_features() if store is not None else []
+            self._json(200, {"features": {r["name"]: bool(r["enabled"]) for r in rows}})
+            return
         if path == "/api/asr/capabilities":
             self._json(200, asr_capabilities())
             return
@@ -834,7 +851,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/hotwords/apply", "/api/agent/turn"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -856,7 +873,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features"):
                 user = self._admin_user()
                 if not user:
                     return
@@ -873,6 +890,9 @@ class Handler(SimpleHTTPRequestHandler):
                         store.set_release(int(payload.get("id", 0)), str(payload.get("status", "stable")), payload.get("percent"))
                 elif path == "/api/admin/terms":
                     store.review_term(int(payload.get("id", 0)), str(payload.get("status", "approved")), str(payload.get("note", ""))[:120])
+                elif path == "/api/admin/features":
+                    if payload.get("name"):
+                        store.set_feature(str(payload["name"]), bool(payload.get("enabled", True)))
                 elif path == "/api/admin/handoffs":
                     store.update_handoff(int(payload.get("id", 0)), str(payload.get("status", "claimed")), str(payload.get("owner", ""))[:40])
                 elif path == "/api/admin/hotwords":
@@ -922,6 +942,11 @@ class Handler(SimpleHTTPRequestHandler):
                 text = str(payload.get("message", "")).strip()
                 if not text:
                     self._json(400, {"error": "message required"})
+                    return
+                if not feature_on("agent_enabled") or feature_on("maintenance"):
+                    self._json(200, {"intent": "degraded", "action": "degraded", "risk": "medium", "needs_human": True,
+                                     "reply": "系统而家维护中。你可以按「叫家人／叫医生」，或者等阵再试。",
+                                     "slots": {}, "state": {}, "trace": [{"step": "decide", "action": "degraded"}]})
                     return
                 if agent is None:
                     self._json(501, {"error": "agent not available"})
@@ -977,6 +1002,9 @@ class Handler(SimpleHTTPRequestHandler):
                 message = str(payload.get("message", "")).strip()
                 if not message:
                     self._json(400, {"error": "message required"})
+                    return
+                if not feature_on("llm_enabled") or feature_on("maintenance"):
+                    self._json(200, {"reply": "系统维护中，我而家答唔到。可以按「叫家人／叫医生」。", "source": "degraded", "risk": "medium", "needs_human": True, "patient_id": patient_id})
                     return
                 result = ask_llm(message, {"name": PATIENTS[patient_id]["name"]}, payload.get("history") or [])
                 result["reply"] = mask_sensitive_text(result.get("reply", ""))
