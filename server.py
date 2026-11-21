@@ -92,10 +92,10 @@ CHANNELS = {
 }
 
 DEMO_USERS = {
-    "13800000001": {"password": "123456", "role": "elder", "name": "陈婆婆", "patient_ids": ["chen"]},
-    "13800000002": {"password": "123456", "role": "family", "name": "陈先生", "patient_ids": ["chen"]},
-    "13800000003": {"password": "123456", "role": "doctor", "name": "李医生", "patient_ids": ["chen", "li"]},
-    "13800000009": {"password": "123456", "role": "admin", "name": "运营管理员", "patient_ids": []},
+    "13800000001": {"password": "123456", "site_id": "guangzhou", "role": "elder", "name": "陈婆婆", "patient_ids": ["chen"]},
+    "13800000002": {"password": "123456", "site_id": "guangzhou", "role": "family", "name": "陈先生", "patient_ids": ["chen"]},
+    "13800000003": {"password": "123456", "site_id": "guangzhou", "role": "doctor", "name": "李医生", "patient_ids": ["chen", "li"]},
+    "13800000009": {"password": "123456", "site_id": "guangzhou", "role": "admin", "name": "运营管理员", "patient_ids": []},
 }
 
 PATIENTS = {
@@ -729,12 +729,21 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._json(200, store.admin_overview())
             return
+        if path == "/api/site/config":
+            user = auth_user_from_header(self.headers.get("Authorization", ""))
+            if not user:
+                self._json(401, {"error": "unauthorized"})
+                return
+            site = store.get_site(user.get("site_id", "guangzhou")) if store is not None else None
+            self._json(200, {"site": site or {"id": "guangzhou", "name": "广州荔湾", "dialect": "粤语", "voice": "zh-HK", "status": "active"}})
+            return
         if path == "/api/auth/me":
             user = auth_user_from_header(self.headers.get("Authorization", ""))
             if not user:
                 self._json(401, {"error": "unauthorized"})
                 return
-            self._json(200, {"role": user["role"], "name": user["name"], "account": user["account"], "patient_ids": user["patient_ids"]})
+            site = store.get_site(user.get("site_id", "guangzhou")) if store is not None else None
+            self._json(200, {"role": user["role"], "name": user["name"], "account": user["account"], "patient_ids": user["patient_ids"], "site": site})
             return
         if path == "/api/app/patients":
             user = auth_user_from_header(self.headers.get("Authorization", ""))
@@ -775,7 +784,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -797,7 +806,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites"):
                 user = self._admin_user()
                 if not user:
                     return
@@ -814,6 +823,13 @@ class Handler(SimpleHTTPRequestHandler):
                         store.set_release(int(payload.get("id", 0)), str(payload.get("status", "stable")), payload.get("percent"))
                 elif path == "/api/admin/terms":
                     store.review_term(int(payload.get("id", 0)), str(payload.get("status", "approved")), str(payload.get("note", ""))[:120])
+                elif path == "/api/admin/sites":
+                    site = store.get_site(str(payload.get("id", "")))
+                    if site:
+                        for k in ("name", "dialect", "voice", "kb_scope", "alert_target", "status"):
+                            if k in payload:
+                                site[k] = str(payload[k])[:80]
+                        store.update_site(site["id"], site)
                 audit_event("admin.action", request_id=request_id, role="admin", action=path.rsplit("/", 1)[-1])
                 self._json(200, {"ok": True, "overview": store.admin_overview()})
                 return
@@ -828,7 +844,8 @@ class Handler(SimpleHTTPRequestHandler):
                 sess = {"account": account, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"]}
                 token = make_token(sess)
                 audit_event("auth.login", request_id=request_id, role=item["role"], account_hash=hashlib.sha256(account.encode("utf-8")).hexdigest()[:12])
-                self._json(200, {"token": token, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"]})
+                site = store.get_site(item.get("site_id", "guangzhou")) if store is not None else None
+                self._json(200, {"token": token, "role": item["role"], "name": item["name"], "patient_ids": item["patient_ids"], "site": site})
                 return
             if path == "/api/auth/logout":
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
