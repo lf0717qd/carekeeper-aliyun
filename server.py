@@ -834,7 +834,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/hotwords/apply", "/api/agent/turn"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/hotwords/apply", "/api/agent/turn"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -856,7 +856,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs"):
                 user = self._admin_user()
                 if not user:
                     return
@@ -873,6 +873,8 @@ class Handler(SimpleHTTPRequestHandler):
                         store.set_release(int(payload.get("id", 0)), str(payload.get("status", "stable")), payload.get("percent"))
                 elif path == "/api/admin/terms":
                     store.review_term(int(payload.get("id", 0)), str(payload.get("status", "approved")), str(payload.get("note", ""))[:120])
+                elif path == "/api/admin/handoffs":
+                    store.update_handoff(int(payload.get("id", 0)), str(payload.get("status", "claimed")), str(payload.get("owner", ""))[:40])
                 elif path == "/api/admin/hotwords":
                     if payload.get("wrong") and payload.get("right"):
                         store.add_hotword(str(payload["wrong"])[:40], str(payload["right"])[:40], str(payload.get("note", ""))[:80])
@@ -929,6 +931,11 @@ class Handler(SimpleHTTPRequestHandler):
                 result = agent.plan(text, state)
                 AGENT_SESSIONS[sid] = result.get("state", state)
                 action = result.get("action")
+                if action in ("handoff", "emergency") and store is not None:
+                    try:
+                        store.add_handoff(patient_id, sid, result.get("intent", action))
+                    except Exception:
+                        pass
                 source = "agent_" + str(action)
                 citations = []
                 if action == "kb" and result.get("intent") == "bp" and result.get("slots", {}).get("systolic"):
