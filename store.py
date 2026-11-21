@@ -2,6 +2,7 @@
 """SQLite repository for the demo. Production should use RDS/TableStore."""
 from __future__ import annotations
 import json, os, sqlite3, tempfile, threading, time
+from datetime import datetime
 
 DB_PATH = os.getenv("DB_PATH") or os.path.join(tempfile.gettempdir(), "carekeeper.db")
 _LOCK = threading.Lock()
@@ -136,7 +137,7 @@ def admin_overview():
         "terms": _rows("SELECT * FROM terms ORDER BY id"),
         "sites": [json.loads(r["data"]) for r in _rows("SELECT data FROM sites ORDER BY id")],
         "hotwords": _rows("SELECT * FROM hotwords ORDER BY id"),
-        "handoffs": _rows("SELECT * FROM handoffs ORDER BY id DESC"),
+        "handoffs": _handoffs_with_sla(),
         "features": _rows("SELECT * FROM features ORDER BY name"),
     }
 
@@ -204,3 +205,22 @@ def get_features():
 
 def set_feature(name: str, enabled: bool):
     _exec("UPDATE features SET enabled=? WHERE name=?", (1 if enabled else 0, name))
+
+
+def _handoffs_with_sla():
+    rows = _rows("SELECT * FROM handoffs ORDER BY id DESC")
+    now = datetime.now()
+    for r in rows:
+        try:
+            created = datetime.strptime(r["created_at"], "%Y-%m-%d %H:%M")
+            age = int((now - created).total_seconds() // 60)
+        except Exception:
+            age = 0
+        r["age_minutes"] = age
+        if r["status"] == "done":
+            r["sla"] = "done"
+        elif age >= (15 if r["status"] == "open" else 30):
+            r["sla"] = "overdue"
+        else:
+            r["sla"] = "ok"
+    return rows
