@@ -114,12 +114,12 @@ PATIENTS = {
     "chen": {"id": "chen", "name": "陈婆婆", "age": 76, "area": "广州荔湾",
              "dx": "高血压、2型糖尿病", "bp": "148/86", "med": "2/3",
              "follow": "11-25 09:00 · 社区医院二楼",
-             "alerts": [{"t": "今日 08:42", "text": "血压 148/86，已建议静坐复测", "level": "medium", "handled": False},
-                        {"t": "昨日 16:10", "text": "漏服一次降压药，已转药师确认", "level": "medium", "handled": True}]},
+             "alerts": [{"t": "今日 08:42", "text": "血压 148/86，已建议静坐复测", "level": "medium", "handled": False, "why": "持续偏高会增加中风、心梗、肾损伤风险；如果伴随胸痛、气促、视物模糊，要尽快就医。"},
+                        {"t": "昨日 16:10", "text": "漏服一次降压药，已转药师确认", "level": "medium", "handled": True, "why": "漏服可能导致血压反弹；不要自行补服，先问药师或医生。"}]},
     "li": {"id": "li", "name": "李伯", "age": 81, "area": "广州越秀",
            "dx": "高血压、慢阻肺", "bp": "132/78", "med": "3/3",
            "follow": "11-28 10:00 · 社区医院",
-           "alerts": [{"t": "今日 09:10", "text": "血氧 93%，已建议复测并联系家医", "level": "high", "handled": False}]},
+           "alerts": [{"t": "今日 09:10", "text": "血氧 93%，已建议复测并联系家医", "level": "high", "handled": False, "why": "血氧偏低可能影响心脑供氧；如果持续低于 93% 或气促加重，要尽快就医。"}]},
 }
 
 if store is not None:
