@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json, os, sqlite3, tempfile, threading, time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 DB_PATH = os.getenv("DB_PATH") or os.path.join(tempfile.gettempdir(), "carekeeper.db")
 _LOCK = threading.Lock()
@@ -209,7 +210,7 @@ def set_feature(name: str, enabled: bool):
 
 def _handoffs_with_sla():
     rows = _rows("SELECT * FROM handoffs ORDER BY id DESC")
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
     for r in rows:
         try:
             created = datetime.strptime(r["created_at"], "%Y-%m-%d %H:%M")
