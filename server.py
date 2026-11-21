@@ -51,6 +51,13 @@ try:
 except Exception:
     hotwords = None
 
+try:
+    import agent
+except Exception:
+    agent = None
+
+AGENT_SESSIONS = {}
+
 
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -827,7 +834,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/hotwords/apply"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/hotwords/apply", "/api/agent/turn"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -900,6 +907,55 @@ class Handler(SimpleHTTPRequestHandler):
                 if user:
                     audit_event("auth.logout", request_id=request_id, role=user["role"])
                 self._json(200, {"ok": True})
+                return
+            if path == "/api/agent/turn":
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user:
+                    self._json(401, {"error": "unauthorized"})
+                    return
+                patient_id = str(payload.get("patient_id", "")).strip()
+                if patient_id not in user["patient_ids"]:
+                    self._json(403, {"error": "patient not allowed"})
+                    return
+                text = str(payload.get("message", "")).strip()
+                if not text:
+                    self._json(400, {"error": "message required"})
+                    return
+                if agent is None:
+                    self._json(501, {"error": "agent not available"})
+                    return
+                sid = user["account"] + ":" + patient_id
+                state = payload.get("state") or AGENT_SESSIONS.get(sid) or {}
+                result = agent.plan(text, state)
+                AGENT_SESSIONS[sid] = result.get("state", state)
+                action = result.get("action")
+                source = "agent_" + str(action)
+                citations = []
+                if action == "kb" and result.get("intent") == "bp" and result.get("slots", {}).get("systolic"):
+                    sl = result["slots"]
+                    result["reply"] = "婆婆，血压 " + str(sl.get("systolic")) + "/" + str(sl.get("diastolic")) + "。坐低休息十分钟再量；如果胸痛、唞唔到气、睇嘢模糊，就要尽快就医；唔好自己加药。"
+                    source = "agent_bp"
+                elif action == "kb" and result.get("intent") == "glucose" and result.get("slots", {}).get("glucose") is not None:
+                    result["reply"] = "婆婆，血糖 " + str(result["slots"].get("glucose")) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
+                    source = "agent_glucose"
+                elif action == "kb":
+                    q = text
+                    rows = kb_search(q, top_k=2, use_rule=True) if kb_search else []
+                    if rows:
+                        top = rows[0]
+                        result["reply"] = "我查到：" + str(top.get("text", ""))[:260] + "（只作健康教育，唔系诊断；要医生确认。）"
+                        citations = [{"doc_id": top.get("doc_id"), "title": top.get("title"), "section": top.get("section")}]
+                    else:
+                        result["reply"] = "我未查到合适资料。你可以讲多啲，或者我叫家人／姑娘。"
+                        source = "agent_kb_empty"
+                elif action == "summary":
+                    pdata = PATIENTS.get(patient_id, {})
+                    result["reply"] = "今日摘要：" + str(pdata.get("name", "")) + "，血压 " + str(pdata.get("bp", "")) + "，用药 " + str(pdata.get("med", "")) + "，复诊 " + str(pdata.get("follow", "")) + "。可以播报或发家人。"
+                    source = "agent_summary"
+                result.update({"patient_id": patient_id, "source": source, "citations": citations, "session_id": sid})
+                result["reply"] = mask_sensitive_text(result.get("reply", ""))
+                audit_event("agent.turn", request_id=request_id, role=user["role"], patient_id=patient_id, intent=result.get("intent"), action=action, risk=result.get("risk"))
+                self._json(200, result)
                 return
             if path == "/api/app/chat":
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
