@@ -23,6 +23,7 @@ def init(users: dict, patients: dict) -> None:
         c.execute("CREATE TABLE IF NOT EXISTS annotations (id INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id TEXT, dialect TEXT, assignee TEXT, status TEXT, label TEXT, note TEXT, created_at TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS releases (id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT, percent INTEGER, status TEXT, note TEXT, created_at TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS terms (id INTEGER PRIMARY KEY AUTOINCREMENT, term TEXT, standard TEXT, kind TEXT, status TEXT, reviewer TEXT, note TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS hotwords (id INTEGER PRIMARY KEY AUTOINCREMENT, wrong TEXT, right TEXT, active INTEGER, note TEXT)")
         for account, u in users.items():
             c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)", (account, u["password"], u["role"], u["name"], json.dumps(u["patient_ids"], ensure_ascii=False)))
         sites = {
@@ -64,6 +65,17 @@ def init(users: dict, patients: dict) -> None:
                 ("v1.2.00", 10, "canary", "运营后台灰度", "2026-11-20 22:00"),
             ]
             c.executemany("INSERT INTO releases (version,percent,status,note,created_at) VALUES (?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM hotwords").fetchone()[0] == 0:
+            seed = [
+                ("换骗", "换片", 1, "ASR常见误识"),
+                ("换遍", "换片", 1, "ASR常见误识"),
+                ("尿骗", "尿片", 1, "ASR常见误识"),
+                ("心医", "心翳", 1, "胸闷口语"),
+                ("脑退话", "脑退化", 1, "认知口语"),
+                ("压苍", "压疮", 1, "伤口术语"),
+                ("甜尿病", "糖尿病", 1, "糖尿病口语"),
+            ]
+            c.executemany("INSERT INTO hotwords (wrong,right,active,note) VALUES (?,?,?,?)", seed)
         if c.execute("SELECT COUNT(*) FROM terms").fetchone()[0] == 0:
             seed = [
                 ("换片", "失禁 护理 更换", "term", "pending", "", ""),
@@ -116,6 +128,7 @@ def admin_overview():
         "releases": _rows("SELECT * FROM releases ORDER BY id DESC"),
         "terms": _rows("SELECT * FROM terms ORDER BY id"),
         "sites": [json.loads(r["data"]) for r in _rows("SELECT data FROM sites ORDER BY id")],
+        "hotwords": _rows("SELECT * FROM hotwords ORDER BY id"),
     }
 
 
@@ -153,3 +166,15 @@ def get_site(sid: str):
 
 def update_site(sid: str, data: dict):
     _exec("UPDATE sites SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), sid))
+
+
+def get_hotwords():
+    return _rows("SELECT * FROM hotwords ORDER BY id")
+
+
+def add_hotword(wrong: str, right: str, note: str = ""):
+    _exec("INSERT INTO hotwords (wrong,right,active,note) VALUES (?,?,?,?)", (wrong, right, 1, note))
+
+
+def toggle_hotword(hid: int, active: bool):
+    _exec("UPDATE hotwords SET active=? WHERE id=?", (1 if active else 0, hid))
