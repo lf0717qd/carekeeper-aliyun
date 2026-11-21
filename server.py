@@ -46,6 +46,11 @@ try:
 except Exception:
     g2p = None
 
+try:
+    import hotwords
+except Exception:
+    hotwords = None
+
 
 ROOT = Path(__file__).resolve().parent
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -784,7 +789,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/hotwords/apply"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -806,7 +811,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords"):
                 user = self._admin_user()
                 if not user:
                     return
@@ -823,6 +828,11 @@ class Handler(SimpleHTTPRequestHandler):
                         store.set_release(int(payload.get("id", 0)), str(payload.get("status", "stable")), payload.get("percent"))
                 elif path == "/api/admin/terms":
                     store.review_term(int(payload.get("id", 0)), str(payload.get("status", "approved")), str(payload.get("note", ""))[:120])
+                elif path == "/api/admin/hotwords":
+                    if payload.get("wrong") and payload.get("right"):
+                        store.add_hotword(str(payload["wrong"])[:40], str(payload["right"])[:40], str(payload.get("note", ""))[:80])
+                    else:
+                        store.toggle_hotword(int(payload.get("id", 0)), bool(payload.get("active", True)))
                 elif path == "/api/admin/sites":
                     site = store.get_site(str(payload.get("id", "")))
                     if site:
@@ -925,7 +935,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/asr":
                 result = transcribe(str(payload.get("audio_base64", "")))
+                if hotwords is not None:
+                    extra = store.get_hotwords() if store is not None else None
+                    h = hotwords.apply(result.get("text", ""), extra)
+                    result["raw_text"] = h["raw_text"]
+                    result["text"] = h["text"]
+                    result["hotwords"] = h["hotwords"]
+                    result["corrections"] = h["corrections"]
                 self._json(200, result)
+                return
+            if path == "/api/hotwords/apply":
+                text = str(payload.get("text", "")).strip()
+                if not text:
+                    self._json(400, {"error": "text required"})
+                    return
+                extra = store.get_hotwords() if store is not None else None
+                self._json(200, hotwords.apply(text, extra) if hotwords is not None else {"raw_text": text, "text": text, "hotwords": [], "corrections": []})
                 return
             if path == "/api/kb/search":
                 query = str(payload.get("query", "")).strip()
