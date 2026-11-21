@@ -16,6 +16,7 @@ def _conn():
 def init(users: dict, patients: dict) -> None:
     with _LOCK, _conn() as c:
         c.execute("CREATE TABLE IF NOT EXISTS users (account TEXT PRIMARY KEY, password TEXT, role TEXT, name TEXT, patient_ids TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS sites (id TEXT PRIMARY KEY, data TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS patients (id TEXT PRIMARY KEY, data TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, patient TEXT, kind TEXT, score INTEGER, comment TEXT, status TEXT, follow_up TEXT, created_at TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, channel TEXT, variant TEXT, text TEXT, sent INTEGER, positive INTEGER, active INTEGER)")
@@ -24,6 +25,13 @@ def init(users: dict, patients: dict) -> None:
         c.execute("CREATE TABLE IF NOT EXISTS terms (id INTEGER PRIMARY KEY AUTOINCREMENT, term TEXT, standard TEXT, kind TEXT, status TEXT, reviewer TEXT, note TEXT)")
         for account, u in users.items():
             c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)", (account, u["password"], u["role"], u["name"], json.dumps(u["patient_ids"], ensure_ascii=False)))
+        sites = {
+            "guangzhou": {"id": "guangzhou", "name": "广州荔湾", "dialect": "粤语", "voice": "zh-HK", "kb_scope": "全科/伤口/跌倒", "alert_target": "家属+医生", "status": "active"},
+            "shantou": {"id": "shantou", "name": "汕头金平", "dialect": "潮汕话", "voice": "teochew", "kb_scope": "全科/跌倒", "alert_target": "家属+社区", "status": "l1_only"},
+            "hakka": {"id": "hakka", "name": "梅州梅县", "dialect": "客家话", "voice": "hakka", "kb_scope": "全科/跌倒", "alert_target": "家属+社区", "status": "l1_only"},
+        }
+        for sid, site in sites.items():
+            c.execute("INSERT OR REPLACE INTO sites VALUES (?,?)", (sid, json.dumps(site, ensure_ascii=False)))
         for pid, p in patients.items():
             c.execute("INSERT OR REPLACE INTO patients VALUES (?,?)", (pid, json.dumps(p, ensure_ascii=False)))
         if c.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0:
@@ -107,6 +115,7 @@ def admin_overview():
         "annotations": _rows("SELECT * FROM annotations ORDER BY id DESC"),
         "releases": _rows("SELECT * FROM releases ORDER BY id DESC"),
         "terms": _rows("SELECT * FROM terms ORDER BY id"),
+        "sites": [json.loads(r["data"]) for r in _rows("SELECT data FROM sites ORDER BY id")],
     }
 
 
@@ -135,3 +144,12 @@ def set_release(rid, status, percent=None):
 
 def review_term(tid, status, note):
     _exec("UPDATE terms SET status=?, note=? WHERE id=?", (status, note, tid))
+
+
+def get_site(sid: str):
+    rows = _rows("SELECT data FROM sites WHERE id=?", (sid,))
+    return json.loads(rows[0]["data"]) if rows else None
+
+
+def update_site(sid: str, data: dict):
+    _exec("UPDATE sites SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), sid))
