@@ -23,7 +23,7 @@ import uuid
 from difflib import SequenceMatcher
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 try:
     from kb_runtime import search as kb_search
@@ -797,6 +797,26 @@ class Handler(SimpleHTTPRequestHandler):
             site = store.get_site(user.get("site_id", "guangzhou")) if store is not None else None
             self._json(200, {"site": site or {"id": "guangzhou", "name": "广州荔湾", "dialect": "粤语", "voice": "zh-HK", "status": "active"}})
             return
+        if path in ("/api/app/care", "/api/app/doctor-summary"):
+            user = auth_user_from_header(self.headers.get("Authorization", ""))
+            if not user:
+                self._json(401, {"error": "unauthorized"})
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            patient_id = (qs.get("patient_id") or ["chen"])[0]
+            if patient_id not in user["patient_ids"]:
+                self._json(403, {"error": "patient not allowed"})
+                return
+            data = store.care_data(patient_id) if store is not None else {}
+            data["patient"] = PATIENTS.get(patient_id, {})
+            if path == "/api/app/care":
+                self._json(200, data)
+                return
+            recent = data.get("bp", [])[:7]
+            avg_sys = round(sum(x["systolic"] for x in recent) / len(recent)) if recent else None
+            avg_dia = round(sum(x["diastolic"] for x in recent) / len(recent)) if recent else None
+            self._json(200, {"patient": data["patient"], "bp": recent, "avg": {"systolic": avg_sys, "diastolic": avg_dia}, "followups": data.get("followups", []), "medications": data.get("medications", []), "adherence": data.get("adherence", {})})
+            return
         if path == "/api/auth/me":
             user = auth_user_from_header(self.headers.get("Authorization", ""))
             if not user:
@@ -851,7 +871,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff", "/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -929,6 +949,56 @@ class Handler(SimpleHTTPRequestHandler):
                 if user:
                     audit_event("auth.logout", request_id=request_id, role=user["role"])
                 self._json(200, {"ok": True})
+                return
+            if path in ("/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary"):
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user:
+                    self._json(401, {"error": "unauthorized"})
+                    return
+                patient_id = str(payload.get("patient_id", "chen")).strip()
+                if patient_id not in user["patient_ids"]:
+                    self._json(403, {"error": "patient not allowed"})
+                    return
+                if path == "/api/app/care":
+                    data = store.care_data(patient_id) if store is not None else {}
+                    data["patient"] = PATIENTS.get(patient_id, {})
+                    self._json(200, data)
+                    return
+                if path == "/api/app/bp":
+                    try:
+                        sys_v = int(payload.get("systolic")); dia_v = int(payload.get("diastolic"))
+                    except Exception:
+                        self._json(400, {"error": "systolic/diastolic required"})
+                        return
+                    if not (60 <= sys_v <= 260 and 30 <= dia_v <= 160):
+                        self._json(400, {"error": "value out of range"})
+                        return
+                    store.add_bp(patient_id, str(payload.get("measured_at", ""))[:20], sys_v, dia_v, str(payload.get("source", "manual"))[:20], str(payload.get("note", ""))[:60])
+                    self._json(200, {"ok": True, "care": store.care_data(patient_id)})
+                    return
+                if path == "/api/app/followups":
+                    appt = str(payload.get("appointment_at", "")).strip()
+                    if not appt:
+                        self._json(400, {"error": "appointment_at required"})
+                        return
+                    store.add_followup(patient_id, appt[:30], str(payload.get("hospital", ""))[:40], str(payload.get("department", ""))[:40], str(payload.get("remind_at", ""))[:30], str(payload.get("notes", ""))[:80])
+                    self._json(200, {"ok": True, "care": store.care_data(patient_id)})
+                    return
+                if path == "/api/app/med-checkin":
+                    try:
+                        mid = int(payload.get("med_id"))
+                    except Exception:
+                        self._json(400, {"error": "med_id required"})
+                        return
+                    store.checkin_med(patient_id, mid, str(payload.get("slot", "am"))[:10])
+                    self._json(200, {"ok": True, "care": store.care_data(patient_id)})
+                    return
+                data = store.care_data(patient_id)
+                bp = data.get("bp", [])
+                recent = bp[:7]
+                avg_sys = round(sum(x["systolic"] for x in recent) / len(recent)) if recent else None
+                avg_dia = round(sum(x["diastolic"] for x in recent) / len(recent)) if recent else None
+                self._json(200, {"patient": PATIENTS.get(patient_id, {}), "bp": recent, "avg": {"systolic": avg_sys, "diastolic": avg_dia}, "followups": data.get("followups", []), "medications": data.get("medications", []), "adherence": data.get("adherence", {})})
                 return
             if path == "/api/handoff":
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
