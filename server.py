@@ -1167,6 +1167,8 @@ class Handler(SimpleHTTPRequestHandler):
                 sid = user["account"] + ":" + patient_id
                 state = payload.get("state") or AGENT_SESSIONS.get(sid) or {}
                 result = agent.plan(text, state)
+                if result.get("intent") == "emergency" and ("食多" in text or "过量" in text):
+                    result["reply"] = "婆婆，唔好再食药。带埋药袋／药盒，即刻叫家人；如果头晕、呕吐、意识唔清，打 120 或者问中毒咨询。唔好自己催吐。"
                 AGENT_SESSIONS[sid] = result.get("state", state)
                 action = result.get("action")
                 if action in ("handoff", "emergency") and store is not None:
