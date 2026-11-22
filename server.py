@@ -969,6 +969,12 @@ class Handler(SimpleHTTPRequestHandler):
                     except ValueError as exc:
                         self._json(400, {"error": str(exc)})
                         return
+                    if str(payload.get("role", "")) == "elder":
+                        for _pid in (payload.get("patient_ids") or []):
+                            try:
+                                store.create_patient(str(_pid), str(payload.get("name", _pid)), 80, "广州", "待补充")
+                            except ValueError:
+                                pass
                     self._json(200, {"ok": True, "users": store.list_users("doctor")})
                     return
                 if path == "/api/admin/feedback":
@@ -1039,7 +1045,8 @@ class Handler(SimpleHTTPRequestHandler):
                     try:
                         store.bind_patient(user["account"], pid, "doctor")
                     except ValueError as exc:
-                        self._json(409 if str(exc) == "already_bound" else 400, {"error": str(exc)})
+                        msg = "老人档案不存在，请先在后台「创建老人档案」" if str(exc) == "patient not found" else ("该老人已绑定其他医生" if str(exc) == "already_bound" else str(exc))
+                        self._json(409 if str(exc) == "already_bound" else 400, {"error": msg})
                         return
                     self._json(200, {"ok": True, "patients": store.doctor_patients(user["account"])})
                     return
