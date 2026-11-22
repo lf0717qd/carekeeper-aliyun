@@ -36,6 +36,7 @@ def init(users: dict, patients: dict) -> None:
         c.execute("CREATE TABLE IF NOT EXISTS patient_profiles (patient_id TEXT PRIMARY KEY, folder TEXT, diagnosis TEXT, allergies TEXT, note TEXT, updated_by TEXT, updated_at TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS daily_observations (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, observed_date TEXT, heart_rate INTEGER, systolic INTEGER, diastolic INTEGER, respiratory_rate INTEGER, sputum TEXT, urine TEXT, note TEXT, recorded_by TEXT, recorded_at TEXT, UNIQUE(patient_id, observed_date))")
         c.execute("CREATE TABLE IF NOT EXISTS med_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, drug TEXT, dose TEXT, frequency TEXT, duration TEXT, note TEXT, doctor TEXT, created_at TEXT, active INTEGER)")
+        c.execute("CREATE TABLE IF NOT EXISTS agent_sessions (session_id TEXT PRIMARY KEY, state TEXT, updated_at TEXT)")
         for account, u in users.items():
             c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)", (account, u["password"], u["role"], u["name"], json.dumps(u["patient_ids"], ensure_ascii=False)))
         sites = {
@@ -405,3 +406,17 @@ def doctor_for_patient(patient_id: str):
 
 def all_patients():
     return [json.loads(r["data"]) for r in _rows("SELECT data FROM patients ORDER BY id")]
+
+
+def get_agent_state(session_id: str):
+    rows = _rows("SELECT state FROM agent_sessions WHERE session_id=?", (session_id,))
+    if not rows:
+        return None
+    try:
+        return json.loads(rows[0]["state"])
+    except Exception:
+        return None
+
+
+def save_agent_state(session_id: str, state):
+    _exec("INSERT OR REPLACE INTO agent_sessions (session_id,state,updated_at) VALUES (?,?,?)", (session_id, json.dumps(state, ensure_ascii=False), time.strftime("%Y-%m-%d %H:%M:%S")))
