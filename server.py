@@ -140,6 +140,8 @@ PATIENTS = {
 if store is not None:
     try:
         store.init(DEMO_USERS, PATIENTS)
+        for _p in store.all_patients():
+            PATIENTS[_p["id"]] = _p
     except Exception as exc:  # noqa: BLE001
         print("[store] init failed:", type(exc).__name__, file=sys.stderr)
 
@@ -832,6 +834,11 @@ class Handler(SimpleHTTPRequestHandler):
             avg_dia = round(sum(x["diastolic"] for x in recent) / len(recent)) if recent else None
             self._json(200, {"patient": data["patient"], "bp": recent, "avg": {"systolic": avg_sys, "diastolic": avg_dia}, "followups": data.get("followups", []), "medications": data.get("medications", []), "adherence": data.get("adherence", {})})
             return
+        if path == "/api/admin/patients":
+            if not self._admin_user():
+                return
+            self._json(200, {"patients": [json.loads(r["data"]) for r in store._rows("SELECT data FROM patients ORDER BY id")] if store is not None else []})
+            return
         if path == "/api/admin/users":
             if not self._admin_user():
                 return
@@ -863,7 +870,7 @@ class Handler(SimpleHTTPRequestHandler):
             obs = store.list_observations(pid, 30) if store is not None else []
             plans = store.list_med_plans(pid) if store is not None else []
             if path in ("/api/doctor/patient", "/api/app/observations"):
-                self._json(200, {"patient": pdata, "profile": profile, "observations": obs, "med_plans": plans})
+                self._json(200, {"patient": pdata, "profile": profile, "observations": obs, "med_plans": plans, "doctor": store.doctor_for_patient(pid) if store is not None else {}})
             else:
                 self._json(200, {"patient": pdata, "observations": list(reversed(obs)), "profile": profile})
             return
@@ -921,7 +928,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff", "/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary", "/api/admin/users", "/api/doctor/bind", "/api/doctor/observations", "/api/doctor/profile", "/api/doctor/med-plans"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff", "/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary", "/api/admin/users", "/api/admin/patients", "/api/doctor/bind", "/api/doctor/observations", "/api/doctor/profile", "/api/doctor/med-plans"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -943,9 +950,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/admin/users"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/admin/users", "/api/admin/patients"):
                 user = self._admin_user()
                 if not user:
+                    return
+                if path == "/api/admin/patients":
+                    try:
+                        pdata = store.create_patient(str(payload.get("patient_id", "")).strip(), str(payload.get("name", "")).strip(), payload.get("age", 0), str(payload.get("area", "")), str(payload.get("dx", "")), str(payload.get("bp", "")), str(payload.get("med", "")), str(payload.get("follow", "")))
+                        PATIENTS[pdata["id"]] = pdata
+                    except ValueError as exc:
+                        self._json(400, {"error": str(exc)})
+                        return
+                    self._json(200, {"ok": True, "patient": pdata})
                     return
                 if path == "/api/admin/users":
                     try:
