@@ -1184,7 +1184,12 @@ class Handler(SimpleHTTPRequestHandler):
                         _sys = 0; _dia = 0
                     if _sys >= 180 or _dia >= 110:
                         result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + " 属于非常高。即刻坐低，唔好行，叫家人／医生；如果胸痛、唞唔到气、睇嘢模糊、讲话唔清，打 120。唔好自己加药。"
-                        result["risk"] = "high"; result["needs_human"] = True
+                        result["risk"] = "high"; result["needs_human"] = True; result["action"] = "emergency"
+                        if store is not None:
+                            try:
+                                store.add_handoff(patient_id, sid, "high_bp")
+                            except Exception:
+                                pass
                         source = "agent_bp_high"
                     elif _sys < 90 or _dia < 60:
                         result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + " 偏低。先坐低或者平躺，慢慢饮水；如果头晕、眼黑、跌倒，叫家人／医生。唔好自己加药。"
@@ -1194,8 +1199,27 @@ class Handler(SimpleHTTPRequestHandler):
                         result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + "。坐低休息十分钟再量；如果胸痛、唞唔到气、睇嘢模糊，就要尽快就医；唔好自己加药。"
                         source = "agent_bp"
                 elif action == "kb" and result.get("intent") == "glucose" and result.get("slots", {}).get("glucose") is not None:
-                    result["reply"] = "婆婆，血糖 " + str(result["slots"].get("glucose")) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
-                    source = "agent_glucose"
+                    try:
+                        _g = float(result["slots"].get("glucose"))
+                    except Exception:
+                        _g = 0
+                    if _g and _g < 3.9:
+                        result["reply"] = "婆婆，血糖 " + str(_g) + " mmol/L 偏低。如果清醒，先食少量糖／含糖饮料，再测一次；如果手震、出汗、意识不清，叫家人／打 120。唔好自己加药。"
+                        result["risk"] = "high"; result["needs_human"] = True
+                        if store is not None:
+                            try: store.add_handoff(patient_id, sid, "glucose_low")
+                            except Exception: pass
+                        source = "agent_glucose_low"
+                    elif _g > 16.7:
+                        result["reply"] = "婆婆，血糖 " + str(_g) + " mmol/L 偏高。先饮水，唔好自己加药；如果口渴、尿多、唞气深、恶心，尽快叫家人／医生。"
+                        result["risk"] = "high"; result["needs_human"] = True
+                        if store is not None:
+                            try: store.add_handoff(patient_id, sid, "glucose_high")
+                            except Exception: pass
+                        source = "agent_glucose_high"
+                    else:
+                        result["reply"] = "婆婆，血糖 " + str(_g) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
+                        source = "agent_glucose"
                 elif action == "kb" and result.get("intent") == "medication":
                     result["reply"] = "婆婆，我唔知道你今日食咗未。你可以话我知边只药、食咗未；我帮你打卡。唔好自己加药、减药或者停药。"
                     source = "agent_medication"
