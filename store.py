@@ -291,7 +291,7 @@ def care_data(patient_id: str):
     fus = _rows("SELECT * FROM followups WHERE patient_id=? ORDER BY appointment_at", (patient_id,))
     done = len([x for x in logs if x["status"] == "done"])
     return {"bp": bps, "medications": meds, "med_logs": logs, "followups": fus, "adherence": {"done": done, "total": max(1, len(meds) * 2)},
-            "observations": list_observations(patient_id, 14), "profile": get_profile(patient_id), "med_plans": list_med_plans(patient_id)}
+            "observations": list_observations(patient_id, 14), "profile": get_profile(patient_id), "med_plans": list_med_plans(patient_id), "doctor": doctor_for_patient(patient_id)}
 
 
 def create_user(account: str, password: str, role: str, name: str, patient_ids=None, created_by="admin"):
@@ -381,3 +381,27 @@ def add_med_plan(patient_id: str, drug: str, dose: str, frequency: str, duration
     _exec("INSERT INTO med_plans (patient_id,drug,dose,frequency,duration,note,doctor,created_at,active) VALUES (?,?,?,?,?,?,?,?,?)",
           (patient_id, drug[:60], dose[:40], frequency[:60], duration[:40], note[:160], doctor, time.strftime("%Y-%m-%d %H:%M"), 1))
     return list_med_plans(patient_id)
+
+
+def create_patient(patient_id: str, name: str, age, area: str, dx: str, bp="", med="", follow=""):
+    if not patient_id or not name:
+        raise ValueError("patient_id/name required")
+    data = {"id": patient_id, "name": name, "age": int(age or 0), "area": area, "dx": dx,
+            "bp": bp or "—", "med": med or "0/0", "follow": follow or "未安排", "alerts": []}
+    with _LOCK, _conn() as c:
+        if c.execute("SELECT 1 FROM patients WHERE id=?", (patient_id,)).fetchone():
+            raise ValueError("patient exists")
+        c.execute("INSERT INTO patients (id,data) VALUES (?,?)", (patient_id, json.dumps(data, ensure_ascii=False)))
+        c.commit()
+    return data
+
+
+def doctor_for_patient(patient_id: str):
+    rows = _rows("SELECT dp.doctor_account,u.name FROM doctor_patient dp LEFT JOIN users u ON u.account=dp.doctor_account WHERE dp.patient_id=?", (patient_id,))
+    if not rows:
+        return {}
+    return {"account": rows[0]["doctor_account"], "name": rows[0]["name"] or rows[0]["doctor_account"]}
+
+
+def all_patients():
+    return [json.loads(r["data"]) for r in _rows("SELECT data FROM patients ORDER BY id")]
