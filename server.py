@@ -1058,6 +1058,9 @@ class Handler(SimpleHTTPRequestHandler):
                     self._json(200, {"ok": True, "profile": profile})
                     return
                 if path == "/api/doctor/med-plans":
+                    if str(payload.get("confirm_patient_id", "")) != pid:
+                        self._json(400, {"error": "请核对当前老人后再保存用药方案"})
+                        return
                     plans = store.add_med_plan(pid, str(payload.get("drug", "")), str(payload.get("dose", "")), str(payload.get("frequency", "")), str(payload.get("duration", "")), str(payload.get("note", "")), user["account"])
                     self._json(200, {"ok": True, "med_plans": plans})
                     return
