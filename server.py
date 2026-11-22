@@ -53,6 +53,7 @@ except Exception:
 
 try:
     import agent
+    import agent_graph
 except Exception:
     agent = None
 
@@ -729,6 +730,37 @@ def llm_understand(message: str, profile: dict):
     }
 
 
+def symptom_kb_context(query: str):
+    if not kb_search:
+        return None
+    # Only attach a KB note for body/symptom questions; otherwise a generic
+    # "好攰" query can retrieve an unrelated wound-care page.
+    terms = re.findall(r"(脚|腳|膝|腰|背|肩|手|伤口|傷口|压疮|壓瘡|换片|換片|尿片|失禁|咳|痰|发烧|發燒|发热|發熱|肿|腫|痛|头晕|頭暈|肚屙|腹泻|便秘|皮肤|皮膚)", query)
+    if not terms:
+        return None
+    try:
+        rows = kb_search(query, top_k=3, use_rule=True)
+    except Exception:
+        return None
+    for row in rows:
+        text = str(row.get("text", "")).strip()
+        title = str(row.get("title", ""))
+        if len(text) < 20 or text.startswith("|") or "|" in text[:40]:
+            continue
+        if not any(t in text or t in title for t in terms):
+            continue
+        text = re.sub(r"\s+", " ", text)
+        parts = [x.strip() for x in re.split(r"(?<=[。！？；])", text) if len(x.strip()) >= 8]
+        parts = [x for x in parts if x[:1] not in "、，。；,; " and "、" not in x[:4]]
+        snippet = "".join(parts[:2]).strip()
+        if len(snippet) < 12:
+            snippet = text[:140]
+        snippet = snippet[:160]
+        cite = str(row.get("citation") or title or "").strip()
+        return snippet, cite
+    return None
+
+
 def guard_agent_reply(reply: str) -> str:
     text = str(reply or "").strip()
     if len(text) > 320:
@@ -1224,8 +1256,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self._json(501, {"error": "agent not available"})
                     return
                 sid = user["account"] + ":" + patient_id
-                state = payload.get("state") or AGENT_SESSIONS.get(sid) or {}
-                result = agent.plan(text, state)
+                state = payload.get("state") or (store.get_agent_state(sid) if store is not None else None) or AGENT_SESSIONS.get(sid) or {}
+                result = agent_graph.GRAPH.run(text, state)
                 if result.get("intent") == "emergency" and ("食多" in text or "过量" in text):
                     result["reply"] = "婆婆，唔好再食药。带埋药袋／药盒，即刻叫家人；如果头晕、呕吐、意识唔清，打 120 或者问中毒咨询。唔好自己催吐。"
                 if result.get("intent") == "unknown" and len(text) >= 2:
@@ -1239,6 +1271,11 @@ class Handler(SimpleHTTPRequestHandler):
                     except Exception:
                         pass
                 AGENT_SESSIONS[sid] = result.get("state", state)
+                if store is not None:
+                    try:
+                        store.save_agent_state(sid, AGENT_SESSIONS[sid])
+                    except Exception:
+                        pass
                 action = result.get("action")
                 if action in ("handoff", "emergency") and store is not None:
                     try:
@@ -1317,6 +1354,14 @@ class Handler(SimpleHTTPRequestHandler):
                     result["reply"] = "今日摘要：" + str(pdata.get("name", "")) + "，血压 " + str(pdata.get("bp", "")) + "，用药 " + str(pdata.get("med", "")) + "，复诊 " + str(pdata.get("follow", "")) + "。可以播报或发家人。"
                     source = "agent_summary"
                 result.update({"patient_id": patient_id, "source": source, "citations": citations, "session_id": sid})
+                if result.get("intent") == "symptom" and result.get("risk") != "high":
+                    _kb = symptom_kb_context(text)
+                    if _kb:
+                        _snip, _cite = _kb
+                        result["reply"] = str(result.get("reply", "")).rstrip("。") + "。补充：" + _snip
+                        if _cite:
+                            result.setdefault("citations", []).append({"title": _cite})
+                        result["source"] = str(result.get("source", "agent")) + "_kb"
                 _safe_reply = mask_sensitive_text(result.get("reply", ""))
                 result["reply"] = guard_agent_reply(_safe_reply) if result.get("risk") != "high" else _safe_reply
                 audit_event("agent.turn", request_id=request_id, role=user["role"], patient_id=patient_id, intent=result.get("intent"), action=action, risk=result.get("risk"))
