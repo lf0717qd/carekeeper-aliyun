@@ -131,6 +131,10 @@ PATIENTS = {
            "dx": "高血压、慢阻肺", "bp": "132/78", "med": "3/3",
            "follow": "11-28 10:00 · 社区医院",
            "alerts": [{"t": "今日 09:10", "text": "血氧 93%，已建议复测并联系家医", "level": "high", "handled": False, "why": "血氧偏低可能影响心脑供氧；如果持续低于 93% 或气促加重，要尽快就医。"}]},
+    "wang": {"id": "wang", "name": "王伯", "age": 84, "area": "广州海珠",
+             "dx": "高血压、前列腺增生", "bp": "136/80", "med": "1/2",
+             "follow": "11-29 09:30 · 社区医院",
+             "alerts": []},
 }
 
 if store is not None:
@@ -828,6 +832,41 @@ class Handler(SimpleHTTPRequestHandler):
             avg_dia = round(sum(x["diastolic"] for x in recent) / len(recent)) if recent else None
             self._json(200, {"patient": data["patient"], "bp": recent, "avg": {"systolic": avg_sys, "diastolic": avg_dia}, "followups": data.get("followups", []), "medications": data.get("medications", []), "adherence": data.get("adherence", {})})
             return
+        if path == "/api/admin/users":
+            if not self._admin_user():
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            self._json(200, {"users": store.list_users((qs.get("role") or [None])[0]) if store is not None else []})
+            return
+        if path in ("/api/doctor/patients", "/api/doctor/patient", "/api/doctor/trends", "/api/app/observations"):
+            user = auth_user_from_header(self.headers.get("Authorization", ""))
+            if not user:
+                self._json(401, {"error": "unauthorized"})
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            pid = (qs.get("patient_id") or ["chen"])[0]
+            if user["role"] == "doctor":
+                if store is None or not store.doctor_has_patient(user["account"], pid):
+                    self._json(403, {"error": "patient not bound"})
+                    return
+            elif pid not in user["patient_ids"]:
+                self._json(403, {"error": "patient not allowed"})
+                return
+            if path == "/api/doctor/patients":
+                if user["role"] != "doctor":
+                    self._json(403, {"error": "doctor only"})
+                    return
+                self._json(200, {"patients": store.doctor_patients(user["account"]) if store is not None else []})
+                return
+            pdata = PATIENTS.get(pid, {})
+            profile = store.get_profile(pid) if store is not None else {}
+            obs = store.list_observations(pid, 30) if store is not None else []
+            plans = store.list_med_plans(pid) if store is not None else []
+            if path in ("/api/doctor/patient", "/api/app/observations"):
+                self._json(200, {"patient": pdata, "profile": profile, "observations": obs, "med_plans": plans})
+            else:
+                self._json(200, {"patient": pdata, "observations": list(reversed(obs)), "profile": profile})
+            return
         if path == "/api/auth/me":
             user = auth_user_from_header(self.headers.get("Authorization", ""))
             if not user:
@@ -882,7 +921,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff", "/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary"):
+        if path not in ("/api/chat", "/api/chat_stream", "/api/asr", "/api/kb/search", "/api/audit/event", "/api/format", "/api/channel/message", "/api/auth/login", "/api/auth/logout", "/api/app/chat", "/api/pronounce", "/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/hotwords/apply", "/api/agent/turn", "/api/handoff", "/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary", "/api/admin/users", "/api/doctor/bind", "/api/doctor/observations", "/api/doctor/profile", "/api/doctor/med-plans"):
             self._json(404, {"error": "not found"})
             return
         request_id = self.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -904,9 +943,17 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 self._json(200, result)
                 return
-            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features"):
+            if path in ("/api/admin/feedback", "/api/admin/templates", "/api/admin/annotations", "/api/admin/releases", "/api/admin/terms", "/api/admin/sites", "/api/admin/hotwords", "/api/admin/handoffs", "/api/admin/features", "/api/admin/users"):
                 user = self._admin_user()
                 if not user:
+                    return
+                if path == "/api/admin/users":
+                    try:
+                        store.create_user(str(payload.get("account", "")).strip(), str(payload.get("password", "")), str(payload.get("role", "doctor")), str(payload.get("name", "")).strip(), payload.get("patient_ids") or [], "admin")
+                    except ValueError as exc:
+                        self._json(400, {"error": str(exc)})
+                        return
+                    self._json(200, {"ok": True, "users": store.list_users("doctor")})
                     return
                 if path == "/api/admin/feedback":
                     store.update_feedback(int(payload.get("id", 0)), str(payload.get("status", "done")), str(payload.get("follow_up", ""))[:120])
@@ -965,6 +1012,39 @@ class Handler(SimpleHTTPRequestHandler):
             limits = {"/api/chat": 120, "/api/agent/turn": 60, "/api/asr": 20, "/api/handoff": 10}
             if path in limits and not rate_ok(ip + ":" + path, limits[path]):
                 self._json(429, {"error": "rate_limited", "retry_after": 60})
+                return
+            if path in ("/api/doctor/bind", "/api/doctor/observations", "/api/doctor/profile", "/api/doctor/med-plans"):
+                user = auth_user_from_header(self.headers.get("Authorization", ""))
+                if not user or user["role"] != "doctor":
+                    self._json(403, {"error": "doctor only"})
+                    return
+                pid = str(payload.get("patient_id", "")).strip()
+                if path == "/api/doctor/bind":
+                    try:
+                        store.bind_patient(user["account"], pid, "doctor")
+                    except ValueError as exc:
+                        self._json(409 if str(exc) == "already_bound" else 400, {"error": str(exc)})
+                        return
+                    self._json(200, {"ok": True, "patients": store.doctor_patients(user["account"])})
+                    return
+                if store is None or not store.doctor_has_patient(user["account"], pid):
+                    self._json(403, {"error": "patient not bound"})
+                    return
+                if path == "/api/doctor/profile":
+                    profile = store.save_profile(pid, str(payload.get("folder", "")), str(payload.get("diagnosis", "")), str(payload.get("allergies", "")), str(payload.get("note", "")), user["account"])
+                    self._json(200, {"ok": True, "profile": profile})
+                    return
+                if path == "/api/doctor/med-plans":
+                    plans = store.add_med_plan(pid, str(payload.get("drug", "")), str(payload.get("dose", "")), str(payload.get("frequency", "")), str(payload.get("duration", "")), str(payload.get("note", "")), user["account"])
+                    self._json(200, {"ok": True, "med_plans": plans})
+                    return
+                try:
+                    values = {k: int(payload.get(k)) for k in ("heart_rate", "systolic", "diastolic", "respiratory_rate")}
+                except Exception:
+                    self._json(400, {"error": "vitals required"})
+                    return
+                obs = store.save_observation(pid, str(payload.get("observed_date", ""))[:10], values["heart_rate"], values["systolic"], values["diastolic"], values["respiratory_rate"], str(payload.get("sputum", "无")), str(payload.get("urine", "正常")), str(payload.get("note", "")), user["account"])
+                self._json(200, {"ok": True, "observation": obs, "observations": store.list_observations(pid, 14)})
                 return
             if path in ("/api/app/care", "/api/app/bp", "/api/app/followups", "/api/app/med-checkin", "/api/app/doctor-summary"):
                 user = auth_user_from_header(self.headers.get("Authorization", ""))
