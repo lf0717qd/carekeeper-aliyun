@@ -1223,7 +1223,6 @@ class Handler(SimpleHTTPRequestHandler):
                         result["reply"] = "婆婆，血糖 " + str(_g) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
                         source = "agent_glucose"
                 elif action == "kb" and result.get("intent") == "medication":
-                    result["reply"] = "婆婆，我唔知道你今日食咗未。你可以话我知边只药、食咗未；我帮你打卡。唔好自己加药、减药或者停药。"
                     source = "agent_medication"
                 elif action == "kb" and result.get("intent") == "wound":
                     result["reply"] = "婆婆，伤口要保持清洁干爽，按姑娘教嘅方法换敷料。如果红肿、流脓、发热、味道臭，或者痛得厉害，尽快找护士／医生；唔好自己用偏方。"
