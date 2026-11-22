@@ -1178,14 +1178,36 @@ class Handler(SimpleHTTPRequestHandler):
                 citations = []
                 if action == "kb" and result.get("intent") == "bp" and result.get("slots", {}).get("systolic"):
                     sl = result["slots"]
-                    result["reply"] = "婆婆，血压 " + str(sl.get("systolic")) + "/" + str(sl.get("diastolic")) + "。坐低休息十分钟再量；如果胸痛、唞唔到气、睇嘢模糊，就要尽快就医；唔好自己加药。"
-                    source = "agent_bp"
+                    try:
+                        _sys = int(sl.get("systolic")); _dia = int(sl.get("diastolic"))
+                    except Exception:
+                        _sys = 0; _dia = 0
+                    if _sys >= 180 or _dia >= 110:
+                        result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + " 属于非常高。即刻坐低，唔好行，叫家人／医生；如果胸痛、唞唔到气、睇嘢模糊、讲话唔清，打 120。唔好自己加药。"
+                        result["risk"] = "high"; result["needs_human"] = True
+                        source = "agent_bp_high"
+                    elif _sys < 90 or _dia < 60:
+                        result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + " 偏低。先坐低或者平躺，慢慢饮水；如果头晕、眼黑、跌倒，叫家人／医生。唔好自己加药。"
+                        result["risk"] = "medium"
+                        source = "agent_bp_low"
+                    else:
+                        result["reply"] = "婆婆，血压 " + str(_sys) + "/" + str(_dia) + "。坐低休息十分钟再量；如果胸痛、唞唔到气、睇嘢模糊，就要尽快就医；唔好自己加药。"
+                        source = "agent_bp"
                 elif action == "kb" and result.get("intent") == "glucose" and result.get("slots", {}).get("glucose") is not None:
                     result["reply"] = "婆婆，血糖 " + str(result["slots"].get("glucose")) + " mmol/L。唔好自己加药；如果头晕、出汗、手震，先按低血糖处理并叫家人／医生。"
                     source = "agent_glucose"
                 elif action == "kb" and result.get("intent") == "medication":
                     result["reply"] = "婆婆，我唔知道你今日食咗未。你可以话我知边只药、食咗未；我帮你打卡。唔好自己加药、减药或者停药。"
                     source = "agent_medication"
+                elif action == "kb" and result.get("intent") == "wound":
+                    result["reply"] = "婆婆，伤口要保持清洁干爽，按姑娘教嘅方法换敷料。如果红肿、流脓、发热、味道臭，或者痛得厉害，尽快找护士／医生；唔好自己用偏方。"
+                    source = "agent_wound"
+                elif action == "kb" and result.get("intent") == "diet":
+                    result["reply"] = "婆婆，高血压加糖尿病：低盐、低糖、少油，按餐食，唔好漏餐；唔好用保健品代替药。具体餐单可以问营养师。"
+                    source = "agent_diet"
+                elif action == "kb" and result.get("intent") == "fall":
+                    result["reply"] = "婆婆，跌倒之后唔好急住起身。先检查有冇痛、头晕、出血；如果起唔到身、意识唔清、剧痛或者头部撞到，叫家人／打 120。"
+                    source = "agent_fall"
                 elif action == "kb":
                     q = text
                     rows = kb_search(q, top_k=2, use_rule=True) if kb_search else []
