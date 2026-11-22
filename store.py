@@ -28,6 +28,14 @@ def init(users: dict, patients: dict) -> None:
         c.execute("CREATE TABLE IF NOT EXISTS hotwords (id INTEGER PRIMARY KEY AUTOINCREMENT, wrong TEXT, right TEXT, active INTEGER, note TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS handoffs (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, session_id TEXT, reason TEXT, status TEXT, owner TEXT, created_at TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS features (name TEXT PRIMARY KEY, enabled INTEGER, note TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS bp_records (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, measured_at TEXT, systolic INTEGER, diastolic INTEGER, source TEXT, note TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS medications (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, name TEXT, dose TEXT, instruction TEXT, slot TEXT, active INTEGER)")
+        c.execute("CREATE TABLE IF NOT EXISTS med_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, med_id INTEGER, slot TEXT, status TEXT, logged_at TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS followups (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, appointment_at TEXT, hospital TEXT, department TEXT, remind_at TEXT, status TEXT, notes TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS doctor_patient (patient_id TEXT PRIMARY KEY, doctor_account TEXT, bound_at TEXT, bound_by TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS patient_profiles (patient_id TEXT PRIMARY KEY, folder TEXT, diagnosis TEXT, allergies TEXT, note TEXT, updated_by TEXT, updated_at TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS daily_observations (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, observed_date TEXT, heart_rate INTEGER, systolic INTEGER, diastolic INTEGER, respiratory_rate INTEGER, sputum TEXT, urine TEXT, note TEXT, recorded_by TEXT, recorded_at TEXT, UNIQUE(patient_id, observed_date))")
+        c.execute("CREATE TABLE IF NOT EXISTS med_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id TEXT, drug TEXT, dose TEXT, frequency TEXT, duration TEXT, note TEXT, doctor TEXT, created_at TEXT, active INTEGER)")
         for account, u in users.items():
             c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)", (account, u["password"], u["role"], u["name"], json.dumps(u["patient_ids"], ensure_ascii=False)))
         sites = {
@@ -69,6 +77,40 @@ def init(users: dict, patients: dict) -> None:
                 ("v1.2.00", 10, "canary", "运营后台灰度", "2026-11-20 22:00"),
             ]
             c.executemany("INSERT INTO releases (version,percent,status,note,created_at) VALUES (?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM bp_records").fetchone()[0] == 0:
+            seed = [
+                ("chen", "2026-11-21 08:40", 148, 86, "manual", "早上"),
+                ("chen", "2026-11-20 20:10", 142, 84, "manual", "晚上"),
+                ("chen", "2026-11-20 08:30", 150, 88, "device", "血压计"),
+                ("chen", "2026-11-19 08:20", 138, 82, "manual", "早上"),
+            ]
+            c.executemany("INSERT INTO bp_records (patient_id,measured_at,systolic,diastolic,source,note) VALUES (?,?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM medications").fetchone()[0] == 0:
+            seed = [
+                ("chen", "氨氯地平", "5mg", "早上饭后一粒", "am", 1),
+                ("chen", "二甲双胍", "0.5g", "早晚饭后各一粒", "both", 1),
+            ]
+            c.executemany("INSERT INTO medications (patient_id,name,dose,instruction,slot,active) VALUES (?,?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM med_logs").fetchone()[0] == 0:
+            c.execute("INSERT INTO med_logs (patient_id,med_id,slot,status,logged_at) VALUES (?,?,?,?,?)", ("chen", 1, "am", "done", "2026-11-21 08:50"))
+        if c.execute("SELECT COUNT(*) FROM followups").fetchone()[0] == 0:
+            c.execute("INSERT INTO followups (patient_id,appointment_at,hospital,department,remind_at,status,notes) VALUES (?,?,?,?,?,?,?)", ("chen", "2026-11-25 09:00", "社区医院", "二楼慢病门诊", "2026-11-24 09:00", "upcoming", "带血压记录"))
+        if c.execute("SELECT COUNT(*) FROM doctor_patient").fetchone()[0] == 0:
+            for pid in ("chen", "li"):
+                c.execute("INSERT OR IGNORE INTO doctor_patient (patient_id,doctor_account,bound_at,bound_by) VALUES (?,?,?,?)", (pid, "13800000003", "2026-11-21 09:00", "admin"))
+        if c.execute("SELECT COUNT(*) FROM patient_profiles").fetchone()[0] == 0:
+            c.execute("INSERT OR REPLACE INTO patient_profiles (patient_id,folder,diagnosis,allergies,note,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)", ("chen", "高血压", "高血压、2型糖尿病", "", "独居；儿子陈先生为紧急联系人", "13800000003", "2026-11-21 09:05"))
+            c.execute("INSERT OR REPLACE INTO patient_profiles (patient_id,folder,diagnosis,allergies,note,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)", ("li", "慢阻肺", "高血压、慢阻肺", "", "独居；女儿李小姐", "13800000003", "2026-11-21 09:06"))
+        if c.execute("SELECT COUNT(*) FROM daily_observations").fetchone()[0] == 0:
+            seed = [
+                ("chen", "2026-11-19", 78, 138, 82, 18, "无", "正常", "晨间护理", "13800000003", "2026-11-19 08:10"),
+                ("chen", "2026-11-20", 82, 142, 84, 19, "有", "正常", "晨间护理", "13800000003", "2026-11-20 08:20"),
+                ("chen", "2026-11-21", 84, 148, 86, 20, "有", "减少", "晨间护理；已嘱复测血压", "13800000003", "2026-11-21 08:30"),
+                ("li", "2026-11-21", 92, 132, 78, 22, "有", "正常", "晨间护理", "13800000003", "2026-11-21 08:40"),
+            ]
+            c.executemany("INSERT INTO daily_observations (patient_id,observed_date,heart_rate,systolic,diastolic,respiratory_rate,sputum,urine,note,recorded_by,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", seed)
+        if c.execute("SELECT COUNT(*) FROM med_plans").fetchone()[0] == 0:
+            c.execute("INSERT INTO med_plans (patient_id,drug,dose,frequency,duration,note,doctor,created_at,active) VALUES (?,?,?,?,?,?,?,?,?)", ("chen", "氨氯地平", "5mg", "每日1次（早上）", "长期", "比赛演示；按医嘱", "13800000003", "2026-11-21 09:10", 1))
         if c.execute("SELECT COUNT(*) FROM features").fetchone()[0] == 0:
             seed = [("agent_enabled", 1, "Agent turn"), ("llm_enabled", 1, "LLM 回答"), ("kb_enabled", 1, "KB 检索"), ("tts_enabled", 1, "语音播报"), ("maintenance", 0, "维护模式")]
             c.executemany("INSERT INTO features (name,enabled,note) VALUES (?,?,?)", seed)
@@ -140,6 +182,9 @@ def admin_overview():
         "hotwords": _rows("SELECT * FROM hotwords ORDER BY id"),
         "handoffs": _handoffs_with_sla(),
         "features": _rows("SELECT * FROM features ORDER BY name"),
+        "bp_records": _rows("SELECT * FROM bp_records ORDER BY measured_at DESC LIMIT 30"),
+        "medications": _rows("SELECT * FROM medications ORDER BY id"),
+        "followups": _rows("SELECT * FROM followups ORDER BY appointment_at"),
     }
 
 
@@ -225,3 +270,114 @@ def _handoffs_with_sla():
         else:
             r["sla"] = "ok"
     return rows
+
+
+def add_bp(patient_id: str, measured_at: str, systolic: int, diastolic: int, source: str, note: str = ""):
+    _exec("INSERT INTO bp_records (patient_id,measured_at,systolic,diastolic,source,note) VALUES (?,?,?,?,?,?)", (patient_id, measured_at, systolic, diastolic, source, note))
+
+
+def add_followup(patient_id: str, appointment_at: str, hospital: str, department: str, remind_at: str, notes: str = ""):
+    _exec("INSERT INTO followups (patient_id,appointment_at,hospital,department,remind_at,status,notes) VALUES (?,?,?,?,?,?,?)", (patient_id, appointment_at, hospital, department, remind_at, "upcoming", notes))
+
+
+def checkin_med(patient_id: str, med_id: int, slot: str):
+    _exec("INSERT INTO med_logs (patient_id,med_id,slot,status,logged_at) VALUES (?,?,?,?,?)", (patient_id, med_id, slot, "done", time.strftime("%Y-%m-%d %H:%M")))
+
+
+def care_data(patient_id: str):
+    bps = _rows("SELECT * FROM bp_records WHERE patient_id=? ORDER BY measured_at DESC LIMIT 30", (patient_id,))
+    meds = _rows("SELECT * FROM medications WHERE patient_id=? AND active=1 ORDER BY id", (patient_id,))
+    logs = _rows("SELECT * FROM med_logs WHERE patient_id=? ORDER BY logged_at DESC LIMIT 30", (patient_id,))
+    fus = _rows("SELECT * FROM followups WHERE patient_id=? ORDER BY appointment_at", (patient_id,))
+    done = len([x for x in logs if x["status"] == "done"])
+    return {"bp": bps, "medications": meds, "med_logs": logs, "followups": fus, "adherence": {"done": done, "total": max(1, len(meds) * 2)},
+            "observations": list_observations(patient_id, 14), "profile": get_profile(patient_id), "med_plans": list_med_plans(patient_id)}
+
+
+def create_user(account: str, password: str, role: str, name: str, patient_ids=None, created_by="admin"):
+    if role not in ("elder", "family", "doctor", "admin"):
+        raise ValueError("bad role")
+    if not account or not password or not name:
+        raise ValueError("account/password/name required")
+    with _LOCK, _conn() as c:
+        if c.execute("SELECT 1 FROM users WHERE account=?", (account,)).fetchone():
+            raise ValueError("account exists")
+        c.execute("INSERT INTO users (account,password,role,name,patient_ids) VALUES (?,?,?,?,?)", (account, password, role, name, json.dumps(patient_ids or [], ensure_ascii=False)))
+        c.commit()
+
+
+def list_users(role=None):
+    sql = "SELECT account,role,name,patient_ids FROM users"
+    args = ()
+    if role:
+        sql += " WHERE role=?"; args = (role,)
+    sql += " ORDER BY role,account"
+    return [{"account": r["account"], "role": r["role"], "name": r["name"], "patient_ids": json.loads(r["patient_ids"] or "[]")} for r in _rows(sql, args)]
+
+
+def doctor_has_patient(doctor_account: str, patient_id: str) -> bool:
+    row = _rows("SELECT 1 FROM doctor_patient WHERE doctor_account=? AND patient_id=?", (doctor_account, patient_id))
+    return bool(row)
+
+
+def bind_patient(doctor_account: str, patient_id: str, bound_by="admin"):
+    with _LOCK, _conn() as c:
+        if not c.execute("SELECT 1 FROM patients WHERE id=?", (patient_id,)).fetchone():
+            raise ValueError("patient not found")
+        row = c.execute("SELECT doctor_account FROM doctor_patient WHERE patient_id=?", (patient_id,)).fetchone()
+        if row and row["doctor_account"] != doctor_account:
+            raise ValueError("already_bound")
+        c.execute("INSERT OR REPLACE INTO doctor_patient (patient_id,doctor_account,bound_at,bound_by) VALUES (?,?,?,?)", (patient_id, doctor_account, time.strftime("%Y-%m-%d %H:%M"), bound_by))
+        user = c.execute("SELECT patient_ids FROM users WHERE account=?", (doctor_account,)).fetchone()
+        ids = json.loads(user["patient_ids"] or "[]") if user else []
+        if patient_id not in ids:
+            ids.append(patient_id)
+        if user:
+            c.execute("UPDATE users SET patient_ids=? WHERE account=?", (json.dumps(ids, ensure_ascii=False), doctor_account))
+        c.commit()
+
+
+def doctor_patients(doctor_account: str):
+    rows = _rows("SELECT patient_id FROM doctor_patient WHERE doctor_account=? ORDER BY bound_at", (doctor_account,))
+    out = []
+    for r in rows:
+        pid = r["patient_id"]
+        p = _rows("SELECT data FROM patients WHERE id=?", (pid,))
+        if not p:
+            continue
+        data = json.loads(p[0]["data"])
+        obs = list_observations(pid, 1)
+        out.append({"patient": data, "profile": get_profile(pid), "latest": obs[0] if obs else None})
+    return out
+
+
+def get_profile(patient_id: str):
+    rows = _rows("SELECT * FROM patient_profiles WHERE patient_id=?", (patient_id,))
+    return rows[0] if rows else {}
+
+
+def save_profile(patient_id: str, folder: str, diagnosis: str, allergies: str, note: str, updated_by: str):
+    _exec("INSERT OR REPLACE INTO patient_profiles (patient_id,folder,diagnosis,allergies,note,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)",
+          (patient_id, folder[:40], diagnosis[:120], allergies[:120], note[:200], updated_by, time.strftime("%Y-%m-%d %H:%M")))
+    return get_profile(patient_id)
+
+
+def list_observations(patient_id: str, days: int = 14):
+    return _rows("SELECT * FROM daily_observations WHERE patient_id=? ORDER BY observed_date DESC LIMIT ?", (patient_id, max(1, int(days))))
+
+
+def save_observation(patient_id: str, observed_date: str, heart_rate, systolic, diastolic, respiratory_rate, sputum: str, urine: str, note: str, recorded_by: str):
+    _exec("INSERT INTO daily_observations (patient_id,observed_date,heart_rate,systolic,diastolic,respiratory_rate,sputum,urine,note,recorded_by,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+          "ON CONFLICT(patient_id,observed_date) DO UPDATE SET heart_rate=excluded.heart_rate,systolic=excluded.systolic,diastolic=excluded.diastolic,respiratory_rate=excluded.respiratory_rate,sputum=excluded.sputum,urine=excluded.urine,note=excluded.note,recorded_by=excluded.recorded_by,recorded_at=excluded.recorded_at",
+          (patient_id, observed_date[:10], heart_rate, systolic, diastolic, respiratory_rate, sputum[:20], urine[:20], note[:200], recorded_by, time.strftime("%Y-%m-%d %H:%M")))
+    return list_observations(patient_id, 1)[0]
+
+
+def list_med_plans(patient_id: str):
+    return _rows("SELECT * FROM med_plans WHERE patient_id=? ORDER BY created_at DESC", (patient_id,))
+
+
+def add_med_plan(patient_id: str, drug: str, dose: str, frequency: str, duration: str, note: str, doctor: str):
+    _exec("INSERT INTO med_plans (patient_id,drug,dose,frequency,duration,note,doctor,created_at,active) VALUES (?,?,?,?,?,?,?,?,?)",
+          (patient_id, drug[:60], dose[:40], frequency[:60], duration[:40], note[:160], doctor, time.strftime("%Y-%m-%d %H:%M"), 1))
+    return list_med_plans(patient_id)
