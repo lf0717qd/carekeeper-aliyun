@@ -700,7 +700,7 @@ def stream_llm(message: str, profile: dict, history: list[dict]):
     }
 
 
-def transcribe(audio_base64: str) -> dict:
+def transcribe(audio_base64: str, prompt: str = "", hotwords_list=None) -> dict:
     if not API_KEY:
         raise RuntimeError("API_KEY 未配置")
     if not audio_base64:
@@ -708,11 +708,16 @@ def transcribe(audio_base64: str) -> dict:
     raw = base64.b64decode(audio_base64, validate=False)
     if len(raw) > 25 * 1024 * 1024:
         raise ValueError("音频超过 25MB")
-    body = json.dumps({
+    payload = {
         "model": ASR_MODEL,
         "file_base64": audio_base64,
         "stream": False,
-    }, ensure_ascii=False).encode("utf-8")
+    }
+    if prompt:
+        payload["prompt"] = prompt[:8000]
+    if hotwords_list:
+        payload["hotwords"] = [str(x) for x in hotwords_list if str(x).strip()][:100]
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         ASR_URL,
         data=body,
@@ -1326,7 +1331,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(200, {"ok": True})
                 return
             if path == "/api/asr":
-                result = transcribe(str(payload.get("audio_base64", "")))
+                _hot = store.get_hotwords() if store is not None else []
+                _words = [x.get("right") for x in _hot if x.get("active") and x.get("right")]
+                result = transcribe(str(payload.get("audio_base64", "")), "粤语居家老人护理：血压、血糖、用药、复诊、跌倒、换片、心翳、脚痛、脚肿、唔舒服。", _words)
                 if hotwords is not None:
                     extra = store.get_hotwords() if store is not None else None
                     h = hotwords.apply(result.get("text", ""), extra)
