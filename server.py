@@ -684,6 +684,60 @@ def ask_llm(message: str, profile: dict, history: list[dict]) -> dict:
     return result
 
 
+def llm_understand(message: str, profile: dict):
+    """Structured fallback for text the rule agent cannot classify. Never used for emergency."""
+    if not API_KEY:
+        return None
+    system = (
+        "你系粤语居家健康助手。只输出一个 JSON，不要 Markdown。"
+        "字段: intent(symptom|bp|glucose|medication|appointment|report|staff|greeting|unknown), "
+        "reply(粤语短句，最多120字), needs_human(布尔), symptom_part(字符串), duration(字符串), red_flags(字符串数组)。"
+        "唔好诊断、唔好开药、唔好讲剂量、唔好叫老人自己加药/减药/停药。"
+        "如果系急症词，needs_human=true，reply 要叫家人/120。"
+        "如果只系普通痛/唔舒服，intent=symptom，先问部位、几耐、红肿热/气促等。"
+    )
+    payload = json.dumps({"message": message, "profile": profile}, ensure_ascii=False)
+    body = json.dumps({
+        "model": MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": payload}],
+        "temperature": 0.1,
+        "max_tokens": 260,
+    }, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        BASE_URL.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    raw = payload["choices"][0]["message"].get("content", "") or ""
+    data = extract_json(raw)
+    if not data or not data.get("reply"):
+        return None
+    intent = str(data.get("intent", "unknown"))
+    if intent not in ("symptom", "bp", "glucose", "medication", "appointment", "report", "staff", "greeting", "unknown"):
+        intent = "unknown"
+    return {
+        "intent": intent,
+        "reply": str(data.get("reply", ""))[:240],
+        "needs_human": bool(data.get("needs_human", False)),
+        "symptom_part": str(data.get("symptom_part", ""))[:40],
+        "duration": str(data.get("duration", ""))[:40],
+        "red_flags": data.get("red_flags") if isinstance(data.get("red_flags"), list) else [],
+        "source": "agent_llm",
+    }
+
+
+def guard_agent_reply(reply: str) -> str:
+    text = str(reply or "").strip()
+    if len(text) > 320:
+        text = text[:320].rstrip("，。； ") + "。"
+    if text and "只作健康教育" not in text and "唔系诊断" not in text:
+        text = text.rstrip("。") + "。呢个只作健康教育，唔系诊断。"
+    return text
+
+
 def stream_llm(message: str, profile: dict, history: list[dict]):
     """FC 版本先用非流式结果包装成 SSE，前端仍可正常显示。"""
     started = time.time()
@@ -1174,6 +1228,16 @@ class Handler(SimpleHTTPRequestHandler):
                 result = agent.plan(text, state)
                 if result.get("intent") == "emergency" and ("食多" in text or "过量" in text):
                     result["reply"] = "婆婆，唔好再食药。带埋药袋／药盒，即刻叫家人；如果头晕、呕吐、意识唔清，打 120 或者问中毒咨询。唔好自己催吐。"
+                if result.get("intent") == "unknown" and len(text) >= 2:
+                    try:
+                        cap = llm_understand(text, PATIENTS.get(patient_id, {}))
+                        if cap and cap.get("intent") != "unknown":
+                            result.update({k: v for k, v in cap.items() if k != "source"})
+                            result["source"] = "agent_llm"
+                            result.setdefault("state", {}).update({"intent": cap["intent"], "failures": 0})
+                            result["trace"] = result.get("trace", []) + [{"step": "llm_understand", "intent": cap["intent"]}]
+                    except Exception:
+                        pass
                 AGENT_SESSIONS[sid] = result.get("state", state)
                 action = result.get("action")
                 if action in ("handoff", "emergency") and store is not None:
@@ -1181,7 +1245,7 @@ class Handler(SimpleHTTPRequestHandler):
                         store.add_handoff(patient_id, sid, result.get("intent", action))
                     except Exception:
                         pass
-                source = "agent_" + str(action)
+                source = "agent_llm" if result.get("source") == "agent_llm" else "agent_" + str(action)
                 citations = []
                 if action == "kb" and result.get("intent") == "bp" and result.get("slots", {}).get("systolic"):
                     sl = result["slots"]
@@ -1253,7 +1317,8 @@ class Handler(SimpleHTTPRequestHandler):
                     result["reply"] = "今日摘要：" + str(pdata.get("name", "")) + "，血压 " + str(pdata.get("bp", "")) + "，用药 " + str(pdata.get("med", "")) + "，复诊 " + str(pdata.get("follow", "")) + "。可以播报或发家人。"
                     source = "agent_summary"
                 result.update({"patient_id": patient_id, "source": source, "citations": citations, "session_id": sid})
-                result["reply"] = mask_sensitive_text(result.get("reply", ""))
+                _safe_reply = mask_sensitive_text(result.get("reply", ""))
+                result["reply"] = guard_agent_reply(_safe_reply) if result.get("risk") != "high" else _safe_reply
                 audit_event("agent.turn", request_id=request_id, role=user["role"], patient_id=patient_id, intent=result.get("intent"), action=action, risk=result.get("risk"))
                 self._json(200, result)
                 return
